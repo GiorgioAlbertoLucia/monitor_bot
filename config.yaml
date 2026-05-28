@@ -10,3 +10,5 @@ thresholds:
 
 repeat_threshold: 5  # Soglia di messaggi consecutivi
 interval: 15  # Intervallo di monitoraggio in secondi
+
+dashboard_port: 8080

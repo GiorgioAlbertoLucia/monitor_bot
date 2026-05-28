@@ -70,82 +70,47 @@ async def send_disk_usage_details(bot, chat_id, disk_path):
     disk_usage_message = f"Dettagli utilizzo disco su {disk_path}:\n\n{result}"
     await bot.send_message(chat_id=chat_id, text=disk_usage_message)
 
-
-# Funzione per monitorare le risorse
-async def monitor_system(config, bot, message_counts):
+# Replace the existing monitor_system function
+async def monitor_system(config, bot, alert_states):
     thresholds = config["thresholds"]
+    delta_threshold = config.get("delta_threshold", 5)  # % increase to re-alert
     chat_id = config["telegram"]["chat_id"]
-    repeat_threshold = config.get(
-        "repeat_threshold", 5
-    )  # Soglia di messaggi consecutivi
 
-    # Uso CPU
-    cpu_usage = psutil.cpu_percent(interval=0.5)
-    if cpu_usage > thresholds["cpu"]:
-        message_counts["cpu"] += 1
-        if message_counts["cpu"] > repeat_threshold:
-            await send_special_message(bot, chat_id)
-            message_counts["cpu"] = 0  # Reset contatore
+    checks = [
+        ("cpu",   psutil.cpu_percent(interval=0.5),          thresholds["cpu"],    send_cpu_notification,   "CPU",       None),
+        ("ram",   psutil.virtual_memory().percent,           thresholds["ram"],    send_ram_notification,   "RAM",       None),
+        ("disk",  psutil.disk_usage("/home").percent,        thresholds["disk"],   send_disk_notification,  "Disco /home", "/home"),
+        ("disk2", psutil.disk_usage("/data").percent,        thresholds["disk_2"], send_disk_2_notification,"Disco /data", "/data"),
+    ]
+
+    for key, value, threshold, notify_fn, label, disk_path in checks:
+        state = alert_states[key]
+        if value > threshold:
+            last = state.get("last_notified_value")
+            if last is None or (value - last) >= delta_threshold:
+                await notify_fn(bot, chat_id, f"Attenzione! Uso {label}: {value:.1f}%")
+                if disk_path and last is not None and (value - last) >= delta_threshold:
+                    await send_disk_usage_details(bot, chat_id, disk_path)
+                state["last_notified_value"] = value
         else:
-            await send_cpu_notification(
-                bot, chat_id, f"Attenzione! Uso CPU: {cpu_usage}%"
-            )
-
-    # Uso RAM
-    ram_usage = psutil.virtual_memory().percent
-    if ram_usage > thresholds["ram"]:
-        message_counts["ram"] += 1
-        if message_counts["ram"] > repeat_threshold:
-            await send_special_message(bot, chat_id)
-            message_counts["ram"] = 0  # Reset contatore
-        else:
-            await send_ram_notification(
-                bot, chat_id, f"Attenzione! Uso RAM: {ram_usage}%"
-            )
-
-    # Uso disco principale
-    disk_usage = psutil.disk_usage("/home").percent
-    if disk_usage > thresholds["disk"]:
-        message_counts["disk"] += 1
-        if message_counts["disk"] > repeat_threshold:
-            await send_special_message(bot, chat_id)
-            await send_disk_usage_details(bot, chat_id, "/home")  # Dettagli uso disco
-            message_counts["disk"] = 0  # Reset contatore
-        else:
-            await send_disk_notification(
-                bot, chat_id, f"Attenzione! Uso Disco /home: {disk_usage}%"
-            )
-
-    # Uso secondo disco
-    second_disk_usage = psutil.disk_usage("/data").percent
-    if second_disk_usage > thresholds["disk_2"]:
-        message_counts["disk_2"] += 1
-        if message_counts["disk_2"] > repeat_threshold:
-            await send_special_message(bot, chat_id)
-            await send_disk_usage_details(bot, chat_id, "/data")  # Dettagli uso disco
-            message_counts["disk_2"] = 0  # Reset contatore
-        else:
-            await send_disk_2_notification(
-                bot, chat_id, f"Attenzione! Uso Disco /data: {second_disk_usage}%"
-            )
-
-
-# Funzione principale
+            state["last_notified_value"] = None  # Reset when back to normal
+          
+# Replace the message_counts dict and add dashboard thread in main()
 async def main():
     config = load_config("config.yaml")
     bot = Bot(token=config["telegram"]["token"])
 
-    message_counts = {
-        "cpu": 0,
-        "ram": 0,
-        "disk": 0,
-        "disk_2": 0,
-    }  # Contatori per CPU, RAM, dischi
+    alert_states = {k: {"last_notified_value": None} for k in ("cpu", "ram", "disk", "disk2")}
 
-    # Monitoraggio continuo
-    interval = config.get("interval", 60)  # Tempo di sleep (default: 60 secondi)
+    # Start dashboard in background thread
+    import threading
+    import dashboard
+    port = config.get("dashboard_port", 8080)
+    threading.Thread(target=dashboard.start, kwargs={"port": port}, daemon=True).start()
+
+    interval = config.get("interval", 60)
     while True:
-        await monitor_system(config, bot, message_counts)
+        await monitor_system(config, bot, alert_states)
         await asyncio.sleep(interval)
 
 

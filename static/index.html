@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Monitor</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0e1014;
+    --surface:   #161a20;
+    --border:    rgba(255,255,255,0.07);
+    --border-hi: rgba(255,255,255,0.14);
+    --text:      #e2e4e9;
+    --muted:     #6b7280;
+    --cpu:       #378ADD;
+    --ram:       #7F77DD;
+    --disk:      #1D9E75;
+    --disk2:     #BA7517;
+    --danger:    #E24B4A;
+    --warn:      #BA7517;
+    --ok:        #1D9E75;
+    --radius:    10px;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --font-sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    min-height: 100vh;
+    padding: 28px 24px 48px;
+  }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    padding-bottom: 16px;
+    border-bottom: 0.5px solid var(--border);
+  }
+
+  .header-title {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+
+  .header-title span {
+    color: var(--muted);
+    font-weight: 400;
+    margin-left: 10px;
+  }
+
+  #ts {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 16px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px 16px;
+    transition: border-color 0.3s;
+  }
+
+  .card:hover { border-color: var(--border-hi); }
+
+  .card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .card-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .card-label .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .card-value {
+    font-family: var(--font-mono);
+    font-size: 26px;
+    font-weight: 500;
+    line-height: 1;
+    transition: color 0.4s;
+  }
+
+  .chart-wrap {
+    position: relative;
+    height: 160px;
+  }
+
+  .card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+  }
+
+  .threshold-note {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  .status-badge {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: background 0.4s, color 0.4s;
+  }
+
+  .status-ok   { background: rgba(29,158,117,0.15); color: var(--ok);     }
+  .status-warn { background: rgba(186,117,23,0.15);  color: var(--warn);   }
+  .status-crit { background: rgba(226,75,74,0.15);   color: var(--danger); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-title">System Monitor <span>/ live metrics</span></div>
+  <div id="ts">connecting…</div>
+</header>
+
+<div class="grid">
+  <div class="card" id="card-cpu">
+    <div class="card-header">
+      <div class="card-label"><span class="dot" style="background:var(--cpu)"></span>CPU</div>
+      <div class="card-value" id="cpu-val" style="color:var(--cpu)">—</div>
+    </div>
+    <div class="chart-wrap"><canvas id="cpuChart" role="img" aria-label="CPU usage over time">CPU usage history</canvas></div>
+    <div class="card-footer">
+      <span class="threshold-note" id="cpu-note">threshold 80%</span>
+      <span class="status-badge status-ok" id="cpu-badge">OK</span>
+    </div>
+  </div>
+
+  <div class="card" id="card-ram">
+    <div class="card-header">
+      <div class="card-label"><span class="dot" style="background:var(--ram)"></span>RAM</div>
+      <div class="card-value" id="ram-val" style="color:var(--ram)">—</div>
+    </div>
+    <div class="chart-wrap"><canvas id="ramChart" role="img" aria-label="RAM usage over time">RAM usage history</canvas></div>
+    <div class="card-footer">
+      <span class="threshold-note" id="ram-note">threshold 85%</span>
+      <span class="status-badge status-ok" id="ram-badge">OK</span>
+    </div>
+  </div>
+
+  <div class="card" id="card-disk">
+    <div class="card-header">
+      <div class="card-label"><span class="dot" style="background:var(--disk)"></span>Disk /home</div>
+      <div class="card-value" id="disk-val" style="color:var(--disk)">—</div>
+    </div>
+    <div class="chart-wrap"><canvas id="diskChart" role="img" aria-label="/home disk usage over time">/home disk history</canvas></div>
+    <div class="card-footer">
+      <span class="threshold-note" id="disk-note">threshold 90%</span>
+      <span class="status-badge status-ok" id="disk-badge">OK</span>
+    </div>
+  </div>
+
+  <div class="card" id="card-disk2">
+    <div class="card-header">
+      <div class="card-label"><span class="dot" style="background:var(--disk2)"></span>Disk /data</div>
+      <div class="card-value" id="disk2-val" style="color:var(--disk2)">—</div>
+    </div>
+    <div class="chart-wrap"><canvas id="disk2Chart" role="img" aria-label="/data disk usage over time">/data disk history</canvas></div>
+    <div class="card-footer">
+      <span class="threshold-note" id="disk2-note">threshold 90%</span>
+      <span class="status-badge status-ok" id="disk2-badge">OK</span>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+  const CFG = [
+    { key: 'cpu',   color: '#378ADD', threshold: 80, valId: 'cpu-val',   badgeId: 'cpu-badge',   canvasId: 'cpuChart'   },
+    { key: 'ram',   color: '#7F77DD', threshold: 85, valId: 'ram-val',   badgeId: 'ram-badge',   canvasId: 'ramChart'   },
+    { key: 'disk',  color: '#1D9E75', threshold: 90, valId: 'disk-val',  badgeId: 'disk-badge',  canvasId: 'diskChart'  },
+    { key: 'disk2', color: '#BA7517', threshold: 90, valId: 'disk2-val', badgeId: 'disk2-badge', canvasId: 'disk2Chart' },
+  ];
+
+  const MAX    = 60;
+  const labels = [];
+  const charts = {};
+
+  CFG.forEach(({ key, color, threshold, canvasId }) => {
+    charts[key] = new Chart(document.getElementById(canvasId), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            data: [],
+            borderColor: color,
+            borderWidth: 1.5,
+            pointRadius: 0,
+            pointHoverRadius: 3,
+            fill: true,
+            backgroundColor: color + '14',
+            tension: 0.35,
+            order: 2,
+          },
+          {
+            data: [],
+            borderColor: '#E24B4A',
+            borderWidth: 1,
+            borderDash: [4, 4],
+            pointRadius: 0,
+            fill: false,
+            tension: 0,
+            order: 1,
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1e2228',
+            borderColor: 'rgba(255,255,255,0.1)',
+            borderWidth: 0.5,
+            titleColor: '#9ca3af',
+            bodyColor: '#e2e4e9',
+            titleFont: { family: "'IBM Plex Mono', monospace", size: 10 },
+            bodyFont:  { family: "'IBM Plex Mono', monospace", size: 12 },
+            padding: 10,
+            callbacks: {
+              title: items => items[0].label,
+              label: ctx => {
+                if (ctx.datasetIndex === 1) return ' threshold: ' + threshold + '%';
+                return ' ' + ctx.parsed.y.toFixed(1) + '%';
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: {
+              font: { family: "'IBM Plex Mono', monospace", size: 10 },
+              color: '#4b5563',
+              maxTicksLimit: 6,
+              autoSkip: true,
+              maxRotation: 0,
+            },
+            grid: { color: 'rgba(255,255,255,0.04)' },
+          },
+          y: {
+            min: 0, max: 100,
+            ticks: {
+              font: { family: "'IBM Plex Mono', monospace", size: 10 },
+              color: '#4b5563',
+              callback: v => v + '%',
+              stepSize: 25,
+            },
+            grid: { color: 'rgba(255,255,255,0.04)' },
+          }
+        }
+      }
+    });
+  });
+
+  const history = { cpu: [], ram: [], disk: [], disk2: [] };
+
+  function pushData(key, val, threshold) {
+    history[key].push(val);
+    if (history[key].length > MAX) history[key].shift();
+    charts[key].data.datasets[0].data = [...history[key]];
+    charts[key].data.datasets[1].data = new Array(history[key].length).fill(threshold);
+    charts[key].update('none');
+  }
+
+  function updateCard(cfg, val) {
+    const el = document.getElementById(cfg.valId);
+    el.textContent = val.toFixed(1) + '%';
+
+    const badge = document.getElementById(cfg.badgeId);
+    if (val >= cfg.threshold) {
+      el.style.color = '#E24B4A';
+      badge.className = 'status-badge status-crit';
+      badge.textContent = 'ALERT';
+    } else if (val >= cfg.threshold * 0.85) {
+      el.style.color = '#BA7517';
+      badge.className = 'status-badge status-warn';
+      badge.textContent = 'WARN';
+    } else {
+      el.style.color = cfg.color;
+      badge.className = 'status-badge status-ok';
+      badge.textContent = 'OK';
+    }
+  }
+
+  async function fetchAndUpdate() {
+    try {
+      const r = await fetch('/metrics');
+      const d = await r.json();
+      const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      if (labels.length >= MAX) labels.shift();
+      labels.push(t);
+
+      CFG.forEach(cfg => {
+        pushData(cfg.key, d[cfg.key], cfg.threshold);
+        updateCard(cfg, d[cfg.key]);
+      });
+
+      document.getElementById('ts').textContent = 'updated ' + t;
+    } catch (e) {
+      document.getElementById('ts').textContent = 'connection error — retrying…';
+      console.warn('metrics fetch failed', e);
+    }
+  }
+
+  fetchAndUpdate();
+  setInterval(fetchAndUpdate, 5000);
+</script>
+</body>
+</html>
