@@ -3,6 +3,8 @@ import yaml
 from telegram import Bot
 import asyncio
 import subprocess
+# Add to imports at the top
+from telegram.ext import Application, CommandHandler
 
 # Definizione degli emoji con Unicode
 SIREN_EMOJI = "\U0001F6A8"  # Emoji for general alert 🚨
@@ -71,7 +73,7 @@ async def send_disk_usage_details(bot, chat_id, disk_path):
     await bot.send_message(chat_id=chat_id, text=disk_usage_message)
 
 # Replace the existing monitor_system function
-async def monitor_system(config, bot, alert_states):
+async def monitor_system(config, bot, alert_states, muted_metrics):
     thresholds = config["thresholds"]
     delta_threshold = config.get("delta_threshold", 5)  # % increase to re-alert
     chat_id = config["telegram"]["chat_id"]
@@ -85,22 +87,81 @@ async def monitor_system(config, bot, alert_states):
 
     for key, value, threshold, notify_fn, label, disk_path in checks:
         state = alert_states[key]
+        now = asyncio.get_event_loop().time()
+        reset_after = config.get("alert_reset_hours", 3) * 3600
+
+        # Reset if back below threshold or timeout elapsed
+        if state["last_notified_value"] is not None:
+            timed_out = (now - state["last_notified_time"]) >= reset_after
+            if value <= threshold or timed_out:
+                state["last_notified_value"] = None
+                state["last_notified_time"] = None
+
         if value > threshold:
-            last = state.get("last_notified_value")
+            last = state["last_notified_value"]
             if last is None or (value - last) >= delta_threshold:
                 await notify_fn(bot, chat_id, f"Attenzione! Uso {label}: {value:.1f}%")
-                if disk_path and last is not None and (value - last) >= delta_threshold:
+                if disk_path and last is not None:
                     await send_disk_usage_details(bot, chat_id, disk_path)
                 state["last_notified_value"] = value
-        else:
-            state["last_notified_value"] = None  # Reset when back to normal
+                state["last_notified_time"] = now
           
-# Replace the message_counts dict and add dashboard thread in main()
+# Replace the main() function
 async def main():
-    config = load_config("config.yaml")
-    bot = Bot(token=config["telegram"]["token"])
+    config = load_config("configs/config.yaml")
+    
+    alert_states = {
+        k: {"last_notified_value": None, "last_notified_time": None}
+        for k in ("cpu", "ram", "disk", "disk2")
+    }
+    
+    muted_metrics = set()
+    VALID_KEYS = {"cpu", "ram", "disk", "disk2", "all"}
 
-    alert_states = {k: {"last_notified_value": None} for k in ("cpu", "ram", "disk", "disk2")}
+    async def mute_cmd(update, context):
+        args = context.args
+        if not args or args[0].lower() not in VALID_KEYS:
+            await update.message.reply_text(
+                "Usage: /mute <cpu|ram|disk|disk2|all>\nCurrently muted: "
+                + (", ".join(sorted(muted_metrics)) or "none")
+            )
+            return
+        target = args[0].lower()
+        if target == "all":
+            muted_metrics.update({"cpu", "ram", "disk", "disk2"})
+        else:
+            muted_metrics.add(target)
+        await update.message.reply_text(
+            f"🔕 Muted: {', '.join(sorted(muted_metrics))}"
+        )
+
+    async def unmute_cmd(update, context):
+        args = context.args
+        if not args or args[0].lower() not in VALID_KEYS:
+            await update.message.reply_text(
+                "Usage: /unmute <cpu|ram|disk|disk2|all>\nCurrently muted: "
+                + (", ".join(sorted(muted_metrics)) or "none")
+            )
+            return
+        target = args[0].lower()
+        if target == "all":
+            muted_metrics.clear()
+        else:
+            muted_metrics.discard(target)
+        await update.message.reply_text(
+            f"🔔 Unmuted: {target}. Currently muted: {', '.join(sorted(muted_metrics)) or 'none'}"
+        )
+    
+    async def help_cmd(update, context):
+        text = (
+            "📋 *Available commands*\n\n"
+            "/monitor — get the dashboard URL\n"
+            "/mute <cpu|ram|disk|disk2|all> — disable notifications\n"
+            "/unmute <cpu|ram|disk|disk2|all> — re-enable notifications\n"
+            "/help — show this message"
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
+
 
     # Start dashboard in background thread
     import threading
@@ -108,10 +169,26 @@ async def main():
     port = config.get("dashboard_port", 8080)
     threading.Thread(target=dashboard.start, kwargs={"port": port}, daemon=True).start()
 
+    # Build application with command handler
+    app = Application.builder().token(config["telegram"]["token"]).build()
+
+    async def monitor_cmd(update, context):
+        url = config.get("dashboard_url", f"http://{config.get('dashboard_host', 'localhost')}:{port}")
+        await update.message.reply_text(f"📊 Dashboard: {url}")
+
+    app.add_handler(CommandHandler("monitor", monitor_cmd))
+    app.add_handler(CommandHandler("mute",   mute_cmd))
+    app.add_handler(CommandHandler("unmute", unmute_cmd))
+    app.add_handler(CommandHandler("help", help_cmd))
+
+    # Run polling and monitoring loop concurrently
     interval = config.get("interval", 60)
-    while True:
-        await monitor_system(config, bot, alert_states)
-        await asyncio.sleep(interval)
+    async with app:
+        await app.start()
+        await app.updater.start_polling()
+        while True:
+            await monitor_system(config, app.bot, alert_states, muted_metrics)
+            await asyncio.sleep(interval)
 
 
 if __name__ == "__main__":

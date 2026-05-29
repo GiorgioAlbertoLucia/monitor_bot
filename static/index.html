@@ -28,13 +28,17 @@
     --font-sans: 'IBM Plex Sans', sans-serif;
   }
 
+  /* body */
   body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: 14px;
-    min-height: 100vh;
-    padding: 28px 24px 48px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 20px 24px 20px;
+      overflow: hidden;
   }
 
   header {
@@ -68,17 +72,22 @@
   }
 
   .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 16px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+      flex: 1;
+      min-height: 0;
   }
 
   .card {
-    background: var(--surface);
-    border: 0.5px solid var(--border);
-    border-radius: var(--radius);
-    padding: 18px 20px 16px;
-    transition: border-color 0.3s;
+      background: var(--surface);
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px 16px;
+      transition: border-color 0.3s;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
   }
 
   .card:hover { border-color: var(--border-hi); }
@@ -118,8 +127,9 @@
   }
 
   .chart-wrap {
-    position: relative;
-    height: 160px;
+      position: relative;
+      flex: 1;
+      min-height: 0;
   }
 
   .card-footer {
