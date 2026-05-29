@@ -1,5 +1,6 @@
 telegram:
   token: "8767134219:AAE0aZZosdEfKFO4u5qsy1mA-zN6e9FZdxo"
+  #chat_id: 127670498
   chat_id: "-1003778451333"
 
 thresholds:
@@ -14,3 +15,4 @@ alert_reset_hours: 3  # Numero di ore dopo le quali resettare lo stato di allert
 
 dashboard_port: 8080
 dashboard_url: "http://193.205.66.21:8080"
+ngrok_token: "3EOKBQqzITWIUW3f1Gh2LyXm8Su_5LxPAr6SGTPkUfVmd5t9z"

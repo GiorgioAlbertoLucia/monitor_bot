@@ -1,10 +1,15 @@
+from logging import config
+
 import psutil
+from pyngrok import ngrok
 import yaml
 from telegram import Bot
 import asyncio
 import subprocess
 # Add to imports at the top
 from telegram.ext import Application, CommandHandler
+import os
+import pwd
 
 # Definizione degli emoji con Unicode
 SIREN_EMOJI = "\U0001F6A8"  # Emoji for general alert 🚨
@@ -12,6 +17,8 @@ FIRE_EMOJI = "\U0001F525"  # Emoji for high CPU fire 🔥
 WARNING_EMOJI = "\U000026A0"  # Emoji for high RAM warning ⚠️
 DISK_EMOJI = "\U0001F4BE"  # Emoji for disk usage floppy disk 💾
 ANGER_EMOJI = "\U0001F92C"  # Unicode for face with symbols over mouth 🤬
+
+import queue
 
 
 # Funzione per caricare il file YAML
@@ -51,6 +58,78 @@ async def send_disk_notification(bot, chat_id, message):
 @add_emoji(DISK_EMOJI)
 async def send_disk_2_notification(bot, chat_id, message):
     await bot.send_message(chat_id=chat_id, text=message)
+    
+
+def fmt_bytes(kb):
+    mb = kb / 1024
+    if mb >= 1024 * 1024:
+        return f"{mb / (1024 * 1024):.1f} TB"
+    elif mb >= 1024:
+        return f"{mb / 1024:.1f} GB"
+    else:
+        return f"{mb:.1f} MB"
+
+def top_cpu_users():
+    # First call initializes the baseline, discard results
+    for p in psutil.process_iter(['pid', 'username', 'cpu_percent', 'name']):
+        try:
+            p.cpu_percent()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    import time
+    time.sleep(0.5)
+
+    # Second call returns actual usage
+    procs = []
+    for p in psutil.process_iter(['pid', 'username', 'name']):
+        try:
+            procs.append({
+                'pid':         p.pid,
+                'username':    p.username(),
+                'name':        p.name(),
+                'cpu_percent': p.cpu_percent(),
+            })
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    procs.sort(key=lambda x: x['cpu_percent'], reverse=True)
+    lines = [f"  {p['username']} (pid {p['pid']}) — {p['name']} {p['cpu_percent']:.1f}%" for p in procs[:3]]
+    return "Top CPU processes:\n" + "\n".join(lines)
+def top_ram_users():
+    procs = []
+    for p in psutil.process_iter(['pid', 'username', 'memory_info', 'name']):
+        try:
+            procs.append(p.info)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    procs.sort(key=lambda x: x['memory_info'].rss if x['memory_info'] else 0, reverse=True)
+    lines = [
+        f"  {p['username']} (pid {p['pid']}) — {p['name']} {fmt_bytes(p['memory_info'].rss // 1024)}"
+        for p in procs[:3]
+    ]
+    return "Top RAM processes:\n" + "\n".join(lines)
+
+def top_disk_users(path):
+    try:
+        result = subprocess.check_output(
+            f"du -s {path}/*", shell=True, text=True, stderr=subprocess.DEVNULL
+        )
+    except subprocess.CalledProcessError as e:
+        result = e.output or ""
+    entries = []
+    for line in result.strip().splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            size_kb, name = int(parts[0]), parts[1]
+            try:
+                owner = pwd.getpwuid(os.stat(name).st_uid).pw_name
+            except Exception:
+                owner = "unknown"
+            entries.append((size_kb, owner, name))
+    entries.sort(reverse=True)
+    lines = [f"  {owner} — {os.path.basename(name)} ({fmt_bytes(size_kb)})" for size_kb, owner, name in entries[:3]]
+    return f"Top disk usage in {path}:\n" + "\n".join(lines)
 
 
 # Funzione per inviare il messaggio speciale
@@ -100,9 +179,13 @@ async def monitor_system(config, bot, alert_states, muted_metrics):
         if value > threshold:
             last = state["last_notified_value"]
             if last is None or (value - last) >= delta_threshold:
-                await notify_fn(bot, chat_id, f"Attenzione! Uso {label}: {value:.1f}%")
-                if disk_path and last is not None:
-                    await send_disk_usage_details(bot, chat_id, disk_path)
+                if key == "cpu":
+                    detail = top_cpu_users()
+                elif key == "ram":
+                    detail = top_ram_users()
+                else:
+                    detail = top_disk_users(disk_path)
+                await notify_fn(bot, chat_id, f"Attenzione! Uso {label}: {value:.1f}%\n\n{detail}")
                 state["last_notified_value"] = value
                 state["last_notified_time"] = now
           
@@ -162,19 +245,31 @@ async def main():
         )
         await update.message.reply_text(text, parse_mode="Markdown")
 
+    from pyngrok.conf import PyngrokConfig
+    ngrok.set_auth_token(config["ngrok_token"])
 
     # Start dashboard in background thread
     import threading
     import dashboard
     port = config.get("dashboard_port", 8080)
-    threading.Thread(target=dashboard.start, kwargs={"port": port}, daemon=True).start()
+    
+    url_queue = queue.Queue()
+
+    def run_dashboard():
+        from pyngrok import ngrok
+        tunnel = ngrok.connect(port)
+        url_queue.put(tunnel.public_url)
+        dashboard.app.run(host="0.0.0.0", port=port, use_reloader=False)
+
+    threading.Thread(target=run_dashboard, daemon=True).start()
+    public_url = url_queue.get(timeout=10)
+    print(f"Dashboard available at: {public_url}")
 
     # Build application with command handler
     app = Application.builder().token(config["telegram"]["token"]).build()
 
     async def monitor_cmd(update, context):
-        url = config.get("dashboard_url", f"http://{config.get('dashboard_host', 'localhost')}:{port}")
-        await update.message.reply_text(f"📊 Dashboard: {url}")
+        await update.message.reply_text(f"📊 Dashboard: {public_url}")
 
     app.add_handler(CommandHandler("monitor", monitor_cmd))
     app.add_handler(CommandHandler("mute",   mute_cmd))
