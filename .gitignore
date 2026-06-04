@@ -1,1 +1,9 @@
-configs/* # Configuration file for the monitoring bot
+# Configuration files (contain secrets)
+configs/
+
+# Persistent metrics database
+data/
+
+# Python cache
+__pycache__/
+.venv/

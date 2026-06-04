@@ -20,6 +20,7 @@
     --ram:       #7F77DD;
     --disk:      #1D9E75;
     --disk2:     #BA7517;
+    --temp:      #E0633A;
     --danger:    #E24B4A;
     --warn:      #BA7517;
     --ok:        #1D9E75;
@@ -28,22 +29,20 @@
     --font-sans: 'IBM Plex Sans', sans-serif;
   }
 
-  /* body */
   body {
       background: var(--bg);
       color: var(--text);
       font-family: var(--font-sans);
       font-size: 18px;
-      height: 100vh;
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
       padding: 20px 24px 20px;
-      overflow: hidden;
   }
 
   header {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     margin-bottom: 28px;
     padding-bottom: 16px;
@@ -59,17 +58,65 @@
     color: var(--text);
   }
 
-  .header-title span {
-    color: var(--muted);
-    font-weight: 400;
-    margin-left: 10px;
-  }
+  .header-title span { color: var(--muted); font-weight: 400; margin-left: 10px; }
 
-  #ts {
+  .header-right { display: flex; align-items: center; gap: 18px; }
+
+  #ts { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+
+  /* user overlay menu */
+  .users-toolbar { position: relative; }
+
+  .filter-btn {
     font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    background: var(--bg);
+    border: 0.5px solid var(--border-hi);
+    border-radius: 6px;
+    padding: 6px 11px;
+    cursor: pointer;
   }
+  .filter-btn:hover { border-color: var(--text); }
+  .filter-btn .count { color: var(--muted); margin-left: 6px; }
+
+  .filter-menu {
+    position: absolute;
+    right: 0;
+    top: 34px;
+    z-index: 10;
+    background: var(--surface);
+    border: 0.5px solid var(--border-hi);
+    border-radius: 8px;
+    padding: 8px;
+    min-width: 190px;
+    max-height: 320px;
+    overflow-y: auto;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .filter-menu.hidden { display: none; }
+  .filter-menu label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 5px 4px;
+    cursor: pointer;
+    color: var(--text);
+    border-radius: 5px;
+  }
+  .filter-menu label:hover { background: rgba(255,255,255,0.04); }
+  .filter-menu input { display: none; }
+  .swatch {
+    width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0;
+    border: 1px solid var(--border-hi);
+    background: transparent;
+  }
+  .filter-menu input:checked + .swatch { border-color: transparent; }
+  .users-empty { font-family: var(--font-mono); font-size: 11px; color: var(--muted); padding: 6px 4px; }
 
   .grid {
       display: grid;
@@ -87,14 +134,16 @@
       transition: border-color 0.3s;
       display: flex;
       flex-direction: column;
-      min-height: 0;
+      min-height: 220px;
   }
 
+  .card.wide { grid-column: 1 / -1; }
   .card:hover { border-color: var(--border-hi); }
 
   .card-header {
+    position: relative;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
     margin-bottom: 16px;
   }
@@ -111,12 +160,7 @@
     gap: 7px;
   }
 
-  .card-label .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
+  .card-label .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
   .card-value {
     font-family: var(--font-mono);
@@ -126,32 +170,29 @@
     transition: color 0.4s;
   }
 
-  .chart-wrap {
-      position: relative;
-      flex: 1;
-      min-height: 0;
-  }
+  .chart-wrap { position: relative; flex: 1; min-height: 0; }
 
   .card-footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     margin-top: 10px;
   }
 
-  .threshold-note {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--muted);
-  }
+  .threshold-note { font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
 
   .status-badge {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
     font-family: var(--font-mono);
-    font-size: 10px;
-    padding: 2px 8px;
-    border-radius: 4px;
+    font-size: 14px;
+    width: 88px;
+    text-align: center;
+    padding: 5px 0;
+    border-radius: 6px;
     font-weight: 500;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     transition: background 0.4s, color 0.4s;
   }
@@ -159,105 +200,184 @@
   .status-ok   { background: rgba(29,158,117,0.15); color: var(--ok);     }
   .status-warn { background: rgba(186,117,23,0.15);  color: var(--warn);   }
   .status-crit { background: rgba(226,75,74,0.15);   color: var(--danger); }
+  .status-na   { background: rgba(107,114,128,0.15); color: var(--muted);  }
+
+  /* top-users card */
+  #card-top-users .card-header { margin-bottom: 12px; }
+  .top-users-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; flex: 1; }
+  .top-users-col-title {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .tu-row {
+    display: grid;
+    grid-template-columns: 1fr auto 52px;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 9px;
+  }
+  .tu-name {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tu-bar-track { height: 5px; background: rgba(255,255,255,0.05); border-radius: 3px; overflow: hidden; }
+  .tu-bar-fill  { height: 100%; border-radius: 3px; transition: width 0.5s; }
+  .tu-pct {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    text-align: right;
+  }
 </style>
 </head>
 <body>
 
 <header>
-  <div class="header-title">System Monitor <span>/ live metrics</span></div>
-  <div id="ts">connecting…</div>
+  <div class="header-title">ALI50XL Monitor <span>/ live metrics</span></div>
+  <div class="header-right">
+    <div class="users-toolbar">
+      <button class="filter-btn" id="users-filter-btn">Overlay users <span class="count" id="users-count"></span> ▾</button>
+      <div class="filter-menu hidden" id="users-menu">
+        <div id="users-checkboxes"><div class="users-empty">loading…</div></div>
+      </div>
+    </div>
+    <div id="ts">connecting…</div>
+  </div>
 </header>
 
 <div class="grid">
   <div class="card" id="card-cpu">
     <div class="card-header">
       <div class="card-label"><span class="dot" style="background:var(--cpu)"></span>CPU</div>
+      <span class="status-badge status-ok" id="cpu-badge">OK</span>
       <div class="card-value" id="cpu-val" style="color:var(--cpu)">—</div>
     </div>
     <div class="chart-wrap"><canvas id="cpuChart" role="img" aria-label="CPU usage over time">CPU usage history</canvas></div>
     <div class="card-footer">
-      <span class="threshold-note" id="cpu-note">threshold 80%</span>
-      <span class="status-badge status-ok" id="cpu-badge">OK</span>
+      <span class="threshold-note" id="cpu-note">threshold —</span>
     </div>
   </div>
 
   <div class="card" id="card-ram">
     <div class="card-header">
       <div class="card-label"><span class="dot" style="background:var(--ram)"></span>RAM</div>
+      <span class="status-badge status-ok" id="ram-badge">OK</span>
       <div class="card-value" id="ram-val" style="color:var(--ram)">—</div>
     </div>
     <div class="chart-wrap"><canvas id="ramChart" role="img" aria-label="RAM usage over time">RAM usage history</canvas></div>
     <div class="card-footer">
-      <span class="threshold-note" id="ram-note">threshold 85%</span>
-      <span class="status-badge status-ok" id="ram-badge">OK</span>
+      <span class="threshold-note" id="ram-note">threshold —</span>
     </div>
   </div>
 
   <div class="card" id="card-disk">
     <div class="card-header">
-      <div class="card-label"><span class="dot" style="background:var(--disk)"></span>Disk /home</div>
+      <div class="card-label"><span class="dot" style="background:var(--disk)"></span>Disk/home</div>
+      <span class="status-badge status-ok" id="disk-badge">OK</span>
       <div class="card-value" id="disk-val" style="color:var(--disk)">—</div>
     </div>
     <div class="chart-wrap"><canvas id="diskChart" role="img" aria-label="/home disk usage over time">/home disk history</canvas></div>
     <div class="card-footer">
-      <span class="threshold-note" id="disk-note">threshold 90%</span>
-      <span class="status-badge status-ok" id="disk-badge">OK</span>
+      <span class="threshold-note" id="disk-note">threshold —</span>
     </div>
   </div>
 
   <div class="card" id="card-disk2">
     <div class="card-header">
-      <div class="card-label"><span class="dot" style="background:var(--disk2)"></span>Disk /data</div>
+      <div class="card-label"><span class="dot" style="background:var(--disk2)"></span>Disk/data</div>
+      <span class="status-badge status-ok" id="disk2-badge">OK</span>
       <div class="card-value" id="disk2-val" style="color:var(--disk2)">—</div>
     </div>
     <div class="chart-wrap"><canvas id="disk2Chart" role="img" aria-label="/data disk usage over time">/data disk history</canvas></div>
     <div class="card-footer">
-      <span class="threshold-note" id="disk2-note">threshold 90%</span>
-      <span class="status-badge status-ok" id="disk2-badge">OK</span>
+      <span class="threshold-note" id="disk2-note">threshold —</span>
+    </div>
+  </div>
+
+  <div class="card" id="card-temp">
+    <div class="card-header">
+      <div class="card-label"><span class="dot" style="background:var(--temp)"></span>CPU Temp</div>
+      <span class="status-badge status-ok" id="temp-badge">OK</span>
+      <div class="card-value" id="temp-val" style="color:var(--temp)">—</div>
+    </div>
+    <div class="chart-wrap"><canvas id="tempChart" role="img" aria-label="CPU temperature over time">CPU temperature history</canvas></div>
+    <div class="card-footer">
+      <span class="threshold-note" id="temp-note">threshold —</span>
+    </div>
+  </div>
+
+  <div class="card" id="card-top-users">
+    <div class="card-header">
+      <div class="card-label"><span class="dot" style="background:var(--text)"></span>Top users</div>
+    </div>
+    <div class="top-users-grid">
+      <div>
+        <div class="top-users-col-title">CPU</div>
+        <div id="top-users-cpu"></div>
+      </div>
+      <div>
+        <div class="top-users-col-title">RAM</div>
+        <div id="top-users-ram"></div>
+      </div>
     </div>
   </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
+  // key, color, default threshold, unit, y-axis max, element ids, and whether
+  // per-user overlays apply (temperature has no per-user meaning).
   const CFG = [
-    { key: 'cpu',   color: '#378ADD', threshold: 80, valId: 'cpu-val',   badgeId: 'cpu-badge',   canvasId: 'cpuChart'   },
-    { key: 'ram',   color: '#7F77DD', threshold: 85, valId: 'ram-val',   badgeId: 'ram-badge',   canvasId: 'ramChart'   },
-    { key: 'disk',  color: '#1D9E75', threshold: 90, valId: 'disk-val',  badgeId: 'disk-badge',  canvasId: 'diskChart'  },
-    { key: 'disk2', color: '#BA7517', threshold: 90, valId: 'disk2-val', badgeId: 'disk2-badge', canvasId: 'disk2Chart' },
+    { key: 'cpu',   color: '#378ADD', threshold: 90, unit: '%',  max: 100, overlay: true,  valId: 'cpu-val',   badgeId: 'cpu-badge',   noteId: 'cpu-note',   canvasId: 'cpuChart'   },
+    { key: 'ram',   color: '#7F77DD', threshold: 90, unit: '%',  max: 100, overlay: true,  valId: 'ram-val',   badgeId: 'ram-badge',   noteId: 'ram-note',   canvasId: 'ramChart'   },
+    { key: 'disk',  color: '#1D9E75', threshold: 90, unit: '%',  max: 100, overlay: true,  valId: 'disk-val',  badgeId: 'disk-badge',  noteId: 'disk-note',  canvasId: 'diskChart'  },
+    { key: 'disk2', color: '#BA7517', threshold: 90, unit: '%',  max: 100, overlay: true,  valId: 'disk2-val', badgeId: 'disk2-badge', noteId: 'disk2-note', canvasId: 'disk2Chart' },
+    { key: 'temp',  color: '#E0633A', threshold: 85, unit: '°C', max: 100, overlay: false, valId: 'temp-val',  badgeId: 'temp-badge',  noteId: 'temp-note',  canvasId: 'tempChart'  },
   ];
+  const CFG_BY_KEY = Object.fromEntries(CFG.map(c => [c.key, c]));
+  const CFG_KEY = { cpu: 'cpu', ram: 'ram', disk: 'disk', disk2: 'disk_2', temp: 'temp' };
 
-  const MAX    = 60;
+  // Palette for overlaid users; assigned stably as users are discovered.
+  const PALETTE = ['#E0633A', '#46C7B8', '#E0556E', '#C271B8', '#D9B23A', '#3AA0E0',
+                   '#56C271', '#9D7BE0', '#E08A3A', '#5AC8E0', '#B8C23A', '#E03A8A'];
+  const userColors = {};
+  let colorCursor = 0;
+  function colorFor(user) {
+    if (!(user in userColors)) userColors[user] = PALETTE[colorCursor++ % PALETTE.length];
+    return userColors[user];
+  }
+
+  const WINDOW = 3600;          // seconds of history to show
   const labels = [];
+  let historyTs = [];           // parallel to labels: the raw ts of each point
+  let userSeries = {};          // user -> { ts -> {cpu,ram,disk,disk2} }
+  const selectedUsers = new Set();
   const charts = {};
 
-  CFG.forEach(({ key, color, threshold, canvasId }) => {
-    charts[key] = new Chart(document.getElementById(canvasId), {
+  CFG.forEach(cfg => {
+    charts[cfg.key] = new Chart(document.getElementById(cfg.canvasId), {
       type: 'line',
       data: {
         labels,
         datasets: [
-          {
-            data: [],
-            borderColor: color,
-            borderWidth: 1.5,
-            pointRadius: 0,
-            pointHoverRadius: 3,
-            fill: true,
-            backgroundColor: color + '14',
-            tension: 0.35,
-            order: 2,
+          {  // 0: aggregate series
+            data: [], borderColor: cfg.color, borderWidth: 1.5,
+            pointRadius: 0, pointHoverRadius: 3, fill: true,
+            backgroundColor: cfg.color + '14', tension: 0.35, order: 3, spanGaps: true,
           },
-          {
-            data: [],
-            borderColor: '#E24B4A',
-            borderWidth: 1,
-            borderDash: [4, 4],
-            pointRadius: 0,
-            fill: false,
-            tension: 0,
-            order: 1,
+          {  // 1: threshold line
+            data: [], borderColor: '#E24B4A', borderWidth: 1, borderDash: [4, 4],
+            pointRadius: 0, fill: false, tension: 0, order: 2,
           }
+          // 2+: per-user overlays, added dynamically
         ]
       },
       options: {
@@ -268,19 +388,18 @@
         plugins: {
           legend: { display: false },
           tooltip: {
-            backgroundColor: '#1e2228',
-            borderColor: 'rgba(255,255,255,0.1)',
-            borderWidth: 0.5,
-            titleColor: '#9ca3af',
-            bodyColor: '#e2e4e9',
+            backgroundColor: '#1e2228', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 0.5,
+            titleColor: '#9ca3af', bodyColor: '#e2e4e9',
             titleFont: { family: "'IBM Plex Mono', monospace", size: 10 },
             bodyFont:  { family: "'IBM Plex Mono', monospace", size: 12 },
             padding: 10,
             callbacks: {
               title: items => items[0].label,
               label: ctx => {
-                if (ctx.datasetIndex === 1) return ' threshold: ' + threshold + '%';
-                return ' ' + ctx.parsed.y.toFixed(1) + '%';
+                if (ctx.datasetIndex === 1) return ' threshold: ' + cfg.threshold + cfg.unit;
+                if (ctx.parsed.y == null) return null;
+                const who = ctx.dataset.label ? ctx.dataset.label + ' ' : ' ';
+                return who + ctx.parsed.y.toFixed(1) + cfg.unit;
               }
             }
           }
@@ -289,20 +408,15 @@
           x: {
             ticks: {
               font: { family: "'IBM Plex Mono', monospace", size: 10 },
-              color: '#4b5563',
-              maxTicksLimit: 6,
-              autoSkip: true,
-              maxRotation: 0,
+              color: '#4b5563', maxTicksLimit: 6, autoSkip: true, maxRotation: 0,
             },
             grid: { color: 'rgba(255,255,255,0.04)' },
           },
           y: {
-            min: 0, max: 100,
+            min: 0, max: cfg.max,
             ticks: {
               font: { family: "'IBM Plex Mono', monospace", size: 10 },
-              color: '#4b5563',
-              callback: v => v + '%',
-              stepSize: 25,
+              color: '#4b5563', callback: v => v + cfg.unit, stepSize: cfg.max / 4,
             },
             grid: { color: 'rgba(255,255,255,0.04)' },
           }
@@ -311,59 +425,189 @@
     });
   });
 
-  const history = { cpu: [], ram: [], disk: [], disk2: [] };
+  function fmtTime(ts) {
+    return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
 
-  function pushData(key, val, threshold) {
-    history[key].push(val);
-    if (history[key].length > MAX) history[key].shift();
-    charts[key].data.datasets[0].data = [...history[key]];
-    charts[key].data.datasets[1].data = new Array(history[key].length).fill(threshold);
-    charts[key].update('none');
+  function applyThreshold(cfg) {
+    document.getElementById(cfg.noteId).textContent = 'threshold ' + cfg.threshold + cfg.unit;
+  }
+
+  async function loadConfig() {
+    try {
+      const cfg = await (await fetch('/config')).json();
+      const th = cfg.thresholds || {};
+      CFG.forEach(c => {
+        const v = th[CFG_KEY[c.key]];
+        if (typeof v === 'number') c.threshold = v;
+      });
+    } catch (e) { /* keep built-in defaults */ }
+    CFG.forEach(applyThreshold);
+  }
+
+  // ---- per-user overlays ----
+  function overlayDatasets(cfg) {
+    const datasets = [];
+    selectedUsers.forEach(user => {
+      const rows = userSeries[user] || {};
+      const data = historyTs.map(ts => (rows[ts] ? rows[ts][cfg.key] : null));
+      datasets.push({
+        label: user, data,
+        borderColor: colorFor(user), borderWidth: 1.4,
+        pointRadius: 0, pointHoverRadius: 3, fill: false,
+        tension: 0.35, spanGaps: true, order: 0,
+      });
+    });
+    return datasets;
+  }
+
+  function redrawOverlays() {
+    CFG.forEach(cfg => {
+      const chart = charts[cfg.key];
+      chart.data.datasets.length = 2;  // keep aggregate + threshold
+      if (cfg.overlay) chart.data.datasets.push(...overlayDatasets(cfg));
+      chart.update('none');
+    });
+  }
+
+  async function refreshOverlays() {
+    if (selectedUsers.size === 0) { userSeries = {}; redrawOverlays(); return; }
+    try {
+      const q = encodeURIComponent([...selectedUsers].join(','));
+      const rows = await (await fetch('/users/history?seconds=' + WINDOW + '&users=' + q)).json();
+      const map = {};
+      rows.forEach(r => { (map[r.user] ||= {})[r.ts] = r; });
+      userSeries = map;
+    } catch (e) {
+      console.warn('user history fetch failed', e);
+    }
+    redrawOverlays();
+  }
+
+  // Persistent charts: rebuild the aggregate straight from the database.
+  async function refreshHistory() {
+    try {
+      const rows = await (await fetch('/history?seconds=' + WINDOW)).json();
+      labels.length = 0;
+      historyTs = rows.map(r => r.ts);
+      rows.forEach(r => labels.push(fmtTime(r.ts)));
+      CFG.forEach(c => {
+        charts[c.key].data.datasets[0].data = rows.map(r => r[c.key]);
+        charts[c.key].data.datasets[1].data = new Array(labels.length).fill(c.threshold);
+      });
+    } catch (e) {
+      console.warn('history fetch failed', e);
+      return;
+    }
+    await refreshOverlays();   // realign overlays to the new timeline
   }
 
   function updateCard(cfg, val) {
     const el = document.getElementById(cfg.valId);
-    el.textContent = val.toFixed(1) + '%';
-
     const badge = document.getElementById(cfg.badgeId);
+    if (val == null) {
+      el.textContent = 'N/A'; el.style.color = cfg.color;
+      badge.className = 'status-badge status-na'; badge.textContent = 'N/A';
+      return;
+    }
+    el.textContent = val.toFixed(1) + cfg.unit;
     if (val >= cfg.threshold) {
-      el.style.color = '#E24B4A';
-      badge.className = 'status-badge status-crit';
-      badge.textContent = 'ALERT';
+      el.style.color = '#E24B4A'; badge.className = 'status-badge status-crit'; badge.textContent = 'ALERT';
     } else if (val >= cfg.threshold * 0.85) {
-      el.style.color = '#BA7517';
-      badge.className = 'status-badge status-warn';
-      badge.textContent = 'WARN';
+      el.style.color = '#BA7517'; badge.className = 'status-badge status-warn'; badge.textContent = 'WARN';
     } else {
-      el.style.color = cfg.color;
-      badge.className = 'status-badge status-ok';
-      badge.textContent = 'OK';
+      el.style.color = cfg.color; badge.className = 'status-badge status-ok'; badge.textContent = 'OK';
     }
   }
 
-  async function fetchAndUpdate() {
+  async function refreshCurrent() {
     try {
-      const r = await fetch('/metrics');
-      const d = await r.json();
-      const t = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-      if (labels.length >= MAX) labels.shift();
-      labels.push(t);
-
-      CFG.forEach(cfg => {
-        pushData(cfg.key, d[cfg.key], cfg.threshold);
-        updateCard(cfg, d[cfg.key]);
-      });
-
-      document.getElementById('ts').textContent = 'updated ' + t;
+      const d = await (await fetch('/metrics')).json();
+      CFG.forEach(cfg => updateCard(cfg, d[cfg.key]));
+      document.getElementById('ts').textContent = 'updated ' + fmtTime(Date.now() / 1000);
     } catch (e) {
       document.getElementById('ts').textContent = 'connection error — retrying…';
       console.warn('metrics fetch failed', e);
     }
   }
 
-  fetchAndUpdate();
-  setInterval(fetchAndUpdate, 5000);
+  // ---- user picker menu ----
+  function updateCount() {
+    const el = document.getElementById('users-count');
+    el.textContent = selectedUsers.size ? '(' + selectedUsers.size + ')' : '';
+  }
+
+  function onUserToggle(e) {
+    const user = e.target.value;
+    if (e.target.checked) selectedUsers.add(user); else selectedUsers.delete(user);
+    e.target.nextElementSibling.style.background = e.target.checked ? colorFor(user) : 'transparent';
+    updateCount();
+    refreshOverlays();
+  }
+
+  async function loadUsers() {
+    let names = [];
+    try {
+      names = (await (await fetch('/users')).json()).users || [];
+    } catch (e) { /* ignore */ }
+    const host = document.getElementById('users-checkboxes');
+    if (!names.length) { host.innerHTML = '<div class="users-empty">no users recorded yet</div>'; return; }
+    host.innerHTML = names.map(u => {
+      const on = selectedUsers.has(u);
+      const sw = on ? colorFor(u) : 'transparent';
+      return '<label><input type="checkbox" class="user-cb" value="' + u + '"' + (on ? ' checked' : '')
+           + '><span class="swatch" style="background:' + sw + '"></span>' + u + '</label>';
+    }).join('');
+    host.querySelectorAll('.user-cb').forEach(cb => cb.addEventListener('change', onUserToggle));
+  }
+
+  document.getElementById('users-filter-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    document.getElementById('users-menu').classList.toggle('hidden');
+  });
+  document.addEventListener('click', e => {
+    const menu = document.getElementById('users-menu');
+    if (!menu.contains(e.target) && e.target.id !== 'users-filter-btn') menu.classList.add('hidden');
+  });
+
+  // ---- top-users card ----
+  function renderTopUsers(rows, metric, hostId, color) {
+    const host = document.getElementById(hostId);
+    const top = rows.slice(0, 5);
+    if (!top.length) { host.innerHTML = '<div style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">no data</div>'; return; }
+    const max = Math.max(...top.map(r => r[metric]), 0.0001);
+    host.innerHTML = top.map(r => {
+      const pct = Math.min(100, r[metric] / max * 100);
+      return '<div class="tu-row">'
+        + '<span class="tu-name" title="' + r.user + '">' + r.user + '</span>'
+        + '<span class="tu-bar-track"><span class="tu-bar-fill" style="width:' + pct + '%;background:' + color + '"></span></span>'
+        + '<span class="tu-pct">' + r[metric].toFixed(1) + '%</span>'
+        + '</div>';
+    }).join('');
+  }
+
+  async function refreshTopUsers() {
+    try {
+      const rows = await (await fetch('/users/current')).json();
+      renderTopUsers(rows, 'cpu', 'top-users-cpu', '#378ADD');
+      const byRam = [...rows].sort((a, b) => b.ram - a.ram);
+      renderTopUsers(byRam, 'ram', 'top-users-ram', '#7F77DD');
+    } catch (e) {
+      console.warn('users/current fetch failed', e);
+    }
+  }
+
+  (async function init() {
+    await loadConfig();
+    await refreshHistory();
+    await refreshCurrent();
+    await loadUsers();
+    await refreshTopUsers();
+    setInterval(refreshCurrent, 5000);
+    setInterval(refreshHistory, 15000);
+    setInterval(loadUsers, 30000);
+    setInterval(refreshTopUsers, 7000);
+  })();
 </script>
 </body>
 </html>

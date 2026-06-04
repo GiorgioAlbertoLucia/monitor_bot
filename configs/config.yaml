@@ -1,18 +1,27 @@
 telegram:
-  token: "8767134219:AAE0aZZosdEfKFO4u5qsy1mA-zN6e9FZdxo"
+  token: "8191755855:AAEr1GXJSSbTwpgLs0v2pL72wzH4aQrViqc"
   #chat_id: 127670498
-  chat_id: "-1003778451333"
+  chat_id: 1735937570
 
 thresholds:
   cpu: 90  # Soglia percentuale di CPU
   ram: 90  # Soglia percentuale di RAM
   disk: 90  # Soglia percentuale di /home
   disk_2: 90  # Soglia percentuale di /data
+  temp: 85  # Soglia temperatura CPU in °C
 
 repeat_threshold: 5  # Soglia di messaggi consecutivi
 interval: 15  # Intervallo di monitoraggio in secondi
 alert_reset_hours: 3  # Numero di ore dopo le quali resettare lo stato di allerta
 
 dashboard_port: 8080
-dashboard_url: "http://193.205.66.21:8080"
-ngrok_token: "3EOKBQqzITWIUW3f1Gh2LyXm8Su_5LxPAr6SGTPkUfVmd5t9z"
+dashboard_url: "http://xxx.xxx.xx.xx:080"
+ngrok_token: "abcdefghijklmnopqrstuvwxyz1234567890"
+
+# Storico persistente delle metriche (SQLite)
+database:
+  path: "data/metrics.db"     # percorso del database
+  retention_hours: 168        # quante ore di storico conservare (7 giorni)
+
+# Autenticazione opzionale della dashboard: "utente:password" per attivarla, vuoto = aperta
+dashboard_auth: ""
