@@ -14,7 +14,6 @@ FIRE_EMOJI = "\U0001F525"  # Emoji for high CPU fire 🔥
 WARNING_EMOJI = "\U000026A0"  # Emoji for high RAM warning ⚠️
 DISK_EMOJI = "\U0001F4BE"  # Emoji for disk usage floppy disk 💾
 THERMO_EMOJI = "\U0001F321"  # Emoji for temperature thermometer 🌡
-ANGER_EMOJI = "\U0001F92C"  # Unicode for face with symbols over mouth 🤬
 
 import queue
 import time
@@ -34,7 +33,9 @@ def load_config(file_path="config.yaml"):
 def add_emoji(emj):
     def decorator(func):
         async def wrapper(bot, chat_id, message, *args, **kwargs):
-            decorated_message = f"{emj}{emj} {message} {emj}{emj}"
+            # Emojis wrap the first line only, so they don't trail the top-users list.
+            first, sep, rest = message.partition("\n")
+            decorated_message = f"{emj}{emj} {first} {emj}{emj}{sep}{rest}"
             return await func(bot, chat_id, decorated_message, *args, **kwargs)
 
         return wrapper
@@ -68,29 +69,37 @@ async def send_temp_notification(bot, chat_id, message):
     await bot.send_message(chat_id=chat_id, text=message)
 
 
-def top_cpu_users():
-    top = sorted(users.cpu_by_user().items(), key=lambda x: x[1], reverse=True)[:3]
-    lines = [f"  {u}: {v:.1f}%" for u, v in top]
-    return "Top CPU users:\n" + "\n".join(lines)
+def format_top(title, shares, pings=None, min_share=50):
+    """Top-3 users by share; users mapped in ``pings`` at >= ``min_share``% are shown
+    as their @-mention instead of their Unix name.
+
+    Mentions only notify people who are members of the chat the alert goes to.
+    """
+    pings = pings or {}
+    top = sorted(shares.items(), key=lambda x: x[1], reverse=True)[:3]
+    lines = []
+    for user, share in top:
+        name = user
+        handle = pings.get(user)
+        if handle and share >= min_share:
+            name = handle if handle.startswith("@") else "@" + handle
+        lines.append(f"  {name}: {share:.1f}%")
+    return f"{title}:\n" + "\n".join(lines)
 
 
-def top_ram_users():
-    top = sorted(users.ram_by_user().items(), key=lambda x: x[1], reverse=True)[:3]
-    lines = [f"  {u}: {v:.1f}%" for u, v in top]
-    return "Top RAM users:\n" + "\n".join(lines)
+def top_cpu_users(pings=None, min_share=50):
+    return format_top("Top CPU users", users.cpu_by_user(), pings, min_share)
 
 
-def top_disk_users(path):
-    disk_map = users.disk_by_user([path]).get(path, {})
-    top = sorted(disk_map.items(), key=lambda x: x[1], reverse=True)[:3]
-    lines = [f"  {u}: {v:.1f}%" for u, v in top]
-    return f"Top disk users ({path}):\n" + "\n".join(lines)
+def top_ram_users(pings=None, min_share=50):
+    return format_top("Top RAM users", users.ram_by_user(), pings, min_share)
 
 
-# Funzione per inviare il messaggio speciale
-async def send_special_message(bot, chat_id):
-    special_message = f"{ANGER_EMOJI}{ANGER_EMOJI} Il responsabile agisca, prima che gli tagli le mani {ANGER_EMOJI}{ANGER_EMOJI}"
-    await bot.send_message(chat_id=chat_id, text=special_message)
+def top_disk_users(path, pings=None, min_share=50):
+    disk_map = users.disk_by_user([path]).get(path)
+    if disk_map is None:
+        return f"Top disk users ({path}): scan still running"
+    return format_top(f"Top disk users ({path})", disk_map, pings, min_share)
 
 
 # Funzione per inviare i dettagli dell'uso del disco
@@ -106,6 +115,13 @@ async def send_disk_usage_details(bot, chat_id, disk_path):
     disk_usage_message = f"Dettagli utilizzo disco su {disk_path}:\n\n{result}"
     await bot.send_message(chat_id=chat_id, text=disk_usage_message)
 
+def store_sample(db_path, ts, metrics, retention_seconds):
+    """Write one aggregate + per-user sample and drop rows past the retention window."""
+    database.insert(db_path, metrics, ts=ts)
+    database.insert_users(db_path, ts, users.breakdown())
+    database.prune(db_path, retention_seconds)
+
+
 # Replace the existing monitor_system function
 async def monitor_system(config, bot, alert_states, muted_metrics=None, metrics=None):
     thresholds = config["thresholds"]
@@ -113,15 +129,24 @@ async def monitor_system(config, bot, alert_states, muted_metrics=None, metrics=
     chat_id = config["telegram"]["chat_id"]
     muted_metrics = muted_metrics or set()
     if metrics is None:
-        metrics = collect_metrics()
+        metrics = await asyncio.to_thread(collect_metrics)
+
+    # Unix user -> Telegram @username, pinged when their share is >= ping_min_share %.
+    ping = {
+        "pings": {str(u): str(h) for u, h in (config.get("user_pings") or {}).items()},
+        "min_share": config.get("ping_min_share", 50),
+    }
+    cpu_cooldown = config.get("cpu_same_user_cooldown_minutes", 60) * 60
+    disk_interval = config.get("disk_alert_interval_hours", 6) * 3600
 
     # key, value, threshold, notify_fn, label, unit, detail_fn (None = no detail)
+    # Temperature has no per-user share, so its alert blames the top CPU users.
     checks = [
-        ("cpu",   metrics["cpu"],      thresholds["cpu"],         send_cpu_notification,    "Uso CPU",         "%",  top_cpu_users),
-        ("ram",   metrics["ram"],      thresholds["ram"],         send_ram_notification,    "Uso RAM",         "%",  top_ram_users),
-        ("disk",  metrics["disk"],     thresholds["disk"],        send_disk_notification,   "Uso Disco /home", "%",  lambda: top_disk_users("/home")),
-        ("disk2", metrics["disk2"],    thresholds["disk_2"],      send_disk_2_notification, "Uso Disco /data", "%",  lambda: top_disk_users("/data")),
-        ("temp",  metrics.get("temp"), thresholds.get("temp", 80), send_temp_notification,  "Temperatura CPU", "°C", None),
+        ("cpu",   metrics["cpu"],      thresholds["cpu"],         send_cpu_notification,    "Uso CPU",         "%",  lambda: top_cpu_users(**ping)),
+        ("ram",   metrics["ram"],      thresholds["ram"],         send_ram_notification,    "Uso RAM",         "%",  lambda: top_ram_users(**ping)),
+        ("disk",  metrics["disk"],     thresholds["disk"],        send_disk_notification,   "Uso Disco /home", "%",  lambda: top_disk_users("/home", **ping)),
+        ("disk2", metrics["disk2"],    thresholds["disk_2"],      send_disk_2_notification, "Uso Disco /data", "%",  lambda: top_disk_users("/data", **ping)),
+        ("temp",  metrics.get("temp"), thresholds.get("temp", 80), send_temp_notification,  "Temperatura CPU", "°C", lambda: top_cpu_users(**ping)),
     ]
 
     for key, value, threshold, notify_fn, label, unit, detail_fn in checks:
@@ -141,16 +166,47 @@ async def monitor_system(config, bot, alert_states, muted_metrics=None, metrics=
                 state["last_notified_value"] = None
                 state["last_notified_time"] = None
 
-        if value > threshold:
-            last = state["last_notified_value"]
-            if last is None or (value - last) >= delta_threshold:
-                detail = detail_fn() if detail_fn else None
-                message = f"Attenzione! {label}: {value:.1f}{unit}"
-                if detail:
-                    message += f"\n\n{detail}"
-                await notify_fn(bot, chat_id, message)
-                state["last_notified_value"] = value
-                state["last_notified_time"] = now
+        if value <= threshold:
+            continue
+        last = state["last_notified_value"]
+        should_notify = last is None or (value - last) >= delta_threshold
+        detail = None
+        offenders = set()
+
+        if key == "cpu":
+            # Sample per-user CPU once: it picks the offenders and fills the detail.
+            shares = await asyncio.to_thread(users.cpu_by_user)
+            detail = format_top("Top CPU users", shares, **ping)
+            # Users at >= ping_min_share are held responsible, and each triggers at
+            # most one CPU alert per cooldown, whatever happens in between (dips
+            # below threshold, temperature). With nobody over the share, the
+            # usual threshold/delta rules above apply.
+            offenders = {u for u, s in shares.items() if s >= ping["min_share"]}
+            notified = state.setdefault("culprits", {})  # user -> time of their alert
+            for user in [u for u, t in notified.items() if now - t >= cpu_cooldown]:
+                del notified[user]
+            if offenders:
+                should_notify = bool(offenders - notified.keys())
+
+        if key in ("disk", "disk2"):
+            # Disks fill slowly: each one alerts at most once per disk_interval,
+            # ignoring rises and dips below threshold in between.
+            sent_at = state.get("sent_at")
+            should_notify = sent_at is None or (now - sent_at) >= disk_interval
+
+        if should_notify:
+            if detail is None and detail_fn:
+                # Details sample processes / read disk shares: keep them off the event loop.
+                detail = await asyncio.to_thread(detail_fn)
+            message = f"Attenzione! {label}: {value:.1f}{unit}"
+            if detail:
+                message += f"\n\n{detail}"
+            await notify_fn(bot, chat_id, message)
+            state["last_notified_value"] = value
+            state["last_notified_time"] = now
+            state["sent_at"] = now  # unlike last_notified_*, never cleared by a reset
+            for user in offenders:
+                notified.setdefault(user, now)  # already-known users keep their hour
 
 # Replace the main() function
 async def main():
@@ -221,6 +277,7 @@ async def main():
     db_path = db_cfg.get("path", "data/metrics.db")
     retention_seconds = db_cfg.get("retention_hours", 168) * 3600
     database.init_db(db_path)
+    users.start_disk_refresher()  # du runs in the background; nobody waits for it
     dashboard.app.config["DB_PATH"] = db_path
     dashboard.app.config["THRESHOLDS"] = config["thresholds"]
     dashboard.app.config["AUTH"] = config.get("dashboard_auth")  # "user:pass" or None
@@ -254,12 +311,12 @@ async def main():
         await app.start()
         await app.updater.start_polling()
         while True:
+            # Sampling and DB writes block (sleeps, process scans, SQLite), so they run
+            # in a worker thread; the event loop stays free to answer Telegram commands.
             ts = int(time.time())
-            metrics = collect_metrics()
+            metrics = await asyncio.to_thread(collect_metrics)
             try:
-                database.insert(db_path, metrics, ts=ts)
-                database.insert_users(db_path, ts, users.breakdown())
-                database.prune(db_path, retention_seconds)
+                await asyncio.to_thread(store_sample, db_path, ts, metrics, retention_seconds)
             except Exception as e:
                 print(f"DB write failed: {e}")
             await monitor_system(config, app.bot, alert_states, muted_metrics, metrics)

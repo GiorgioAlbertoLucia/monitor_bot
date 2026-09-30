@@ -1,7 +1,7 @@
 telegram:
-  token: "8191755855:AAEr1GXJSSbTwpgLs0v2pL72wzH4aQrViqc"
+  token: "0123456789:abcdefghijklmnopqrstuvwxyz1234567890"
   #chat_id: 127670498
-  chat_id: 1735937570
+  chat_id: 123456789
 
 thresholds:
   cpu: 90  # Soglia percentuale di CPU
@@ -13,6 +13,8 @@ thresholds:
 repeat_threshold: 5  # Soglia di messaggi consecutivi
 interval: 15  # Intervallo di monitoraggio in secondi
 alert_reset_hours: 3  # Numero di ore dopo le quali resettare lo stato di allerta
+disk_alert_interval_hours: 6  # Dischi: al massimo un allarme ogni N ore per ciascun disco (/home e /data separati)
+cpu_same_user_cooldown_minutes: 60  # CPU: chi supera ping_min_share fa scattare al massimo un allarme ogni N minuti (anche se la CPU scende e risale)
 
 dashboard_port: 8080
 dashboard_url: "http://xxx.xxx.xx.xx:080"
@@ -25,3 +27,11 @@ database:
 
 # Autenticazione opzionale della dashboard: "utente:password" per attivarla, vuoto = aperta
 dashboard_auth: ""
+
+# Menzioni Telegram negli allarmi: utente Unix -> @username Telegram.
+# Funziona solo se chat_id è un gruppo di cui la persona fa parte.
+user_pings: {
+}
+#  alice: "@alice_tg"
+#  bob: "@bob_tg"
+ping_min_share: 40  # menziona solo chi usa almeno questa % della macchina (per la temperatura: % di CPU); per la CPU è anche la soglia del "responsabile"

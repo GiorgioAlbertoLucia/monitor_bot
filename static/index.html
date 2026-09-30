@@ -116,6 +116,7 @@
     background: transparent;
   }
   .filter-menu input:checked + .swatch { border-color: transparent; }
+  .filter-menu label.all-users { border-bottom: 0.5px solid var(--border); border-radius: 5px 5px 0 0; margin-bottom: 4px; padding-bottom: 7px; }
   .users-empty { font-family: var(--font-mono); font-size: 11px; color: var(--muted); padding: 6px 4px; }
 
   .grid {
@@ -537,10 +538,39 @@
     el.textContent = selectedUsers.size ? '(' + selectedUsers.size + ')' : '';
   }
 
+  let knownUsers = [];        // names currently listed in the menu
+
+  function setSwatch(cb, color) {
+    cb.nextElementSibling.style.background = cb.checked ? color : 'transparent';
+  }
+
+  // "All" is ticked exactly when every listed user is selected.
+  function syncAllBox() {
+    const all = document.getElementById('users-all-cb');
+    if (!all) return;
+    all.checked = knownUsers.length > 0 && knownUsers.every(u => selectedUsers.has(u));
+    setSwatch(all, 'var(--text)');
+  }
+
   function onUserToggle(e) {
     const user = e.target.value;
     if (e.target.checked) selectedUsers.add(user); else selectedUsers.delete(user);
-    e.target.nextElementSibling.style.background = e.target.checked ? colorFor(user) : 'transparent';
+    setSwatch(e.target, colorFor(user));
+    syncAllBox();
+    updateCount();
+    refreshOverlays();
+  }
+
+  // Checkboxes are updated in place (not re-rendered) so the click that
+  // triggered this still lands inside the menu and doesn't close it.
+  function onAllToggle(e) {
+    const on = e.target.checked;
+    document.querySelectorAll('.user-cb').forEach(cb => {
+      cb.checked = on;
+      if (on) selectedUsers.add(cb.value); else selectedUsers.delete(cb.value);
+      setSwatch(cb, colorFor(cb.value));
+    });
+    syncAllBox();
     updateCount();
     refreshOverlays();
   }
@@ -552,13 +582,26 @@
     } catch (e) { /* ignore */ }
     const host = document.getElementById('users-checkboxes');
     if (!names.length) { host.innerHTML = '<div class="users-empty">no users recorded yet</div>'; return; }
-    host.innerHTML = names.map(u => {
-      const on = selectedUsers.has(u);
-      const sw = on ? colorFor(u) : 'transparent';
-      return '<label><input type="checkbox" class="user-cb" value="' + u + '"' + (on ? ' checked' : '')
-           + '><span class="swatch" style="background:' + sw + '"></span>' + u + '</label>';
-    }).join('');
+
+    // With "All" ticked, users that appear later are selected too.
+    const allBox = document.getElementById('users-all-cb');
+    const newcomers = names.filter(u => !knownUsers.includes(u));
+    const followAll = allBox && allBox.checked && newcomers.length > 0;
+    if (followAll) newcomers.forEach(u => selectedUsers.add(u));
+    knownUsers = names;
+
+    host.innerHTML = '<label class="all-users"><input type="checkbox" id="users-all-cb">'
+      + '<span class="swatch"></span>All</label>'
+      + names.map(u => {
+        const on = selectedUsers.has(u);
+        const sw = on ? colorFor(u) : 'transparent';
+        return '<label><input type="checkbox" class="user-cb" value="' + u + '"' + (on ? ' checked' : '')
+             + '><span class="swatch" style="background:' + sw + '"></span>' + u + '</label>';
+      }).join('');
     host.querySelectorAll('.user-cb').forEach(cb => cb.addEventListener('change', onUserToggle));
+    document.getElementById('users-all-cb').addEventListener('change', onAllToggle);
+    syncAllBox();
+    if (followAll) { updateCount(); refreshOverlays(); }
   }
 
   document.getElementById('users-filter-btn').addEventListener('click', e => {
