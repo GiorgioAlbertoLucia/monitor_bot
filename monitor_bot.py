@@ -1,4 +1,5 @@
 from logging import config
+import html
 
 import psutil
 from pyngrok import ngrok
@@ -46,45 +47,47 @@ def add_emoji(emj):
 # Funzione per inviare notifiche su Telegram con decoratore parametrizzato
 @add_emoji(FIRE_EMOJI)
 async def send_cpu_notification(bot, chat_id, message):
-    await bot.send_message(chat_id=chat_id, text=message)
+    return await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
 
 
 @add_emoji(WARNING_EMOJI)
 async def send_ram_notification(bot, chat_id, message):
-    await bot.send_message(chat_id=chat_id, text=message)
+    return await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
 
 
 @add_emoji(DISK_EMOJI)
 async def send_disk_notification(bot, chat_id, message):
-    await bot.send_message(chat_id=chat_id, text=message)
+    return await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
 
 
 @add_emoji(DISK_EMOJI)
 async def send_disk_2_notification(bot, chat_id, message):
-    await bot.send_message(chat_id=chat_id, text=message)
+    return await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
 
 
 @add_emoji(THERMO_EMOJI)
 async def send_temp_notification(bot, chat_id, message):
-    await bot.send_message(chat_id=chat_id, text=message)
+    return await bot.send_message(chat_id=chat_id, text=message, parse_mode="HTML")
 
 
 def format_top(title, shares, pings=None, min_share=50):
-    """Top-3 users by share; users mapped in ``pings`` at >= ``min_share``% are shown
-    as their @-mention instead of their Unix name.
+    """Top-3 users by share, as HTML; users mapped in ``pings`` at >= ``min_share``%
+    are mentioned instead of shown by their Unix name.
 
-    Mentions only notify people who are members of the chat the alert goes to.
+    ``pings`` maps Unix names to Telegram user IDs; the mention is a tg://user link
+    showing the Unix name. Mentions only notify people who are members of the chat
+    the alert goes to.
     """
     pings = pings or {}
     top = sorted(shares.items(), key=lambda x: x[1], reverse=True)[:3]
     lines = []
     for user, share in top:
-        name = user
-        handle = pings.get(user)
-        if handle and share >= min_share:
-            name = handle if handle.startswith("@") else "@" + handle
+        name = html.escape(user)
+        user_id = pings.get(user)
+        if user_id and share >= min_share:
+            name = f'<a href="tg://user?id={user_id}">{name}</a>'
         lines.append(f"  {name}: {share:.1f}%")
-    return f"{title}:\n" + "\n".join(lines)
+    return f"{html.escape(title)}:\n" + "\n".join(lines)
 
 
 def top_cpu_users(pings=None, min_share=50):
@@ -95,10 +98,14 @@ def top_ram_users(pings=None, min_share=50):
     return format_top("Top RAM users", users.ram_by_user(), pings, min_share)
 
 
+def scan_pending_text(path):
+    return html.escape(f"Top disk users ({path}): scan still running")
+
+
 def top_disk_users(path, pings=None, min_share=50):
     disk_map = users.disk_by_user([path]).get(path)
     if disk_map is None:
-        return f"Top disk users ({path}): scan still running"
+        return scan_pending_text(path)
     return format_top(f"Top disk users ({path})", disk_map, pings, min_share)
 
 
@@ -131,28 +138,47 @@ async def monitor_system(config, bot, alert_states, muted_metrics=None, metrics=
     if metrics is None:
         metrics = await asyncio.to_thread(collect_metrics)
 
-    # Unix user -> Telegram @username, pinged when their share is >= ping_min_share %.
+    # Unix user -> Telegram user ID, pinged when their share is >= ping_min_share %.
     ping = {
         "pings": {str(u): str(h) for u, h in (config.get("user_pings") or {}).items()},
         "min_share": config.get("ping_min_share", 50),
     }
     cpu_cooldown = config.get("cpu_same_user_cooldown_minutes", 60) * 60
     disk_interval = config.get("disk_alert_interval_hours", 6) * 3600
+    disk_paths = {"disk": "/home", "disk2": "/data"}
+    repeat_keys = set(config.get("repeat_every_interval", ["ram", "temp"]))
+    ping_all_keys = set(config.get("ping_everyone", ["disk", "disk2"]))
 
     # key, value, threshold, notify_fn, label, unit, detail_fn (None = no detail)
     # Temperature has no per-user share, so its alert blames the top CPU users.
     checks = [
         ("cpu",   metrics["cpu"],      thresholds["cpu"],         send_cpu_notification,    "Uso CPU",         "%",  lambda: top_cpu_users(**ping)),
         ("ram",   metrics["ram"],      thresholds["ram"],         send_ram_notification,    "Uso RAM",         "%",  lambda: top_ram_users(**ping)),
-        ("disk",  metrics["disk"],     thresholds["disk"],        send_disk_notification,   "Uso Disco /home", "%",  lambda: top_disk_users("/home", **ping)),
-        ("disk2", metrics["disk2"],    thresholds["disk_2"],      send_disk_2_notification, "Uso Disco /data", "%",  lambda: top_disk_users("/data", **ping)),
+        ("disk",  metrics["disk"],     thresholds["disk"],        send_disk_notification,   "Uso Disco /home", "%",  lambda: top_disk_users(disk_paths["disk"], **ping)),
+        ("disk2", metrics["disk2"],    thresholds["disk_2"],      send_disk_2_notification, "Uso Disco /data", "%",  lambda: top_disk_users(disk_paths["disk2"], **ping)),
         ("temp",  metrics.get("temp"), thresholds.get("temp", 80), send_temp_notification,  "Temperatura CPU", "°C", lambda: top_cpu_users(**ping)),
     ]
 
     for key, value, threshold, notify_fn, label, unit, detail_fn in checks:
+        state = alert_states[key]
+        pending = state.get("pending_edit")
+        if pending is not None:
+            # A disk alert went out before its first du scan finished: once the scan
+            # is done, edit the top-users list into it (edits don't re-notify).
+            path = disk_paths[key]
+            if users.disk_by_user([path]).get(path) is not None:
+                state["pending_edit"] = None
+                detail = await asyncio.to_thread(top_disk_users, path, **ping)
+                try:
+                    await bot.edit_message_text(
+                        chat_id=chat_id, message_id=pending.message_id, parse_mode="HTML",
+                        text=pending.text_html.replace(scan_pending_text(path), detail),
+                    )
+                except Exception as e:
+                    print(f"Could not update the {key} alert with the scan: {e}")
+
         if value is None or key in muted_metrics:
             continue
-        state = alert_states[key]
         now = asyncio.get_event_loop().time()
         reset_after = config.get("alert_reset_hours", 3) * 3600
 
@@ -194,14 +220,27 @@ async def monitor_system(config, bot, alert_states, muted_metrics=None, metrics=
             sent_at = state.get("sent_at")
             should_notify = sent_at is None or (now - sent_at) >= disk_interval
 
+        if key in repeat_keys:
+            # Urgent metrics: alert on every check for as long as they stay over threshold.
+            should_notify = True
+
         if should_notify:
             if detail is None and detail_fn:
                 # Details sample processes / read disk shares: keep them off the event loop.
                 detail = await asyncio.to_thread(detail_fn)
-            message = f"Attenzione! {label}: {value:.1f}{unit}"
+            message = html.escape(f"Attenzione! {label}: {value:.1f}{unit}")
             if detail:
                 message += f"\n\n{detail}"
-            await notify_fn(bot, chat_id, message)
+            if key in ping_all_keys and ping["pings"]:
+                # Shared resources: everyone mapped is told, whatever their share.
+                everyone = ", ".join(
+                    f'<a href="tg://user?id={uid}">{html.escape(u)}</a>'
+                    for u, uid in ping["pings"].items()
+                )
+                message += f"\n\n{everyone}"
+            sent = await notify_fn(bot, chat_id, message)
+            if key in disk_paths and detail == scan_pending_text(disk_paths[key]):
+                state["pending_edit"] = sent
             state["last_notified_value"] = value
             state["last_notified_time"] = now
             state["sent_at"] = now  # unlike last_notified_*, never cleared by a reset
@@ -281,6 +320,7 @@ async def main():
     dashboard.app.config["DB_PATH"] = db_path
     dashboard.app.config["THRESHOLDS"] = config["thresholds"]
     dashboard.app.config["AUTH"] = config.get("dashboard_auth")  # "user:pass" or None
+    dashboard.app.config["DEFAULT_USERS"] = [str(u) for u in config.get("dashboard_default_users") or []]
 
     url_queue = queue.Queue()
 

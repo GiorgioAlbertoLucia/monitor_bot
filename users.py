@@ -3,6 +3,7 @@
 # usage can be overlaid as extra lines on the dashboard charts.
 import os
 import pwd
+import re
 import subprocess
 import threading
 import time
@@ -12,6 +13,9 @@ import psutil
 # Mapped onto the dashboard chart keys: first path -> "disk", second -> "disk2".
 MONITORED_DISK_PATHS = ["/home", "/data"]
 DISK_KEYS = ["disk", "disk2"]
+
+# cgroup v2 login slices (user-<uid>.slice), used for page-accurate per-user RAM.
+CGROUP_USER_SLICES = "/sys/fs/cgroup/user.slice"
 
 # Disk usage is expensive (du over /data takes ~30 s), so it is cached per path and,
 # once start_disk_refresher() has been called, refreshed by a background thread so
@@ -45,14 +49,63 @@ def cpu_by_user():
     return {u: v / ncpu for u, v in totals.items() if v > 0}
 
 
+def _cgroup_user_memory():
+    """{uid: bytes} of program memory (anon + shmem, no page cache) charged to each
+    user's login slice. Empty if cgroup v2 user slices aren't available.
+
+    The kernel charges every physical page once, so forked workers sharing
+    copy-on-write memory aren't counted once per process, as summing RSS does.
+    """
+    usage = {}
+    try:
+        slices = os.listdir(CGROUP_USER_SLICES)
+    except OSError:
+        return usage
+    for name in slices:
+        m = re.fullmatch(r"user-(\d+)\.slice", name)
+        if not m:
+            continue
+        try:
+            with open(os.path.join(CGROUP_USER_SLICES, name, "memory.stat")) as f:
+                stat = dict(line.split() for line in f)
+        except (OSError, ValueError):
+            continue
+        usage[int(m.group(1))] = int(stat.get("anon", 0)) + int(stat.get("shmem", 0))
+    return usage
+
+
+def _in_user_slice(pid):
+    """True if the process belongs to a login session (so its cgroup accounts for it)."""
+    try:
+        with open(f"/proc/{pid}/cgroup") as f:
+            return "/user.slice/" in f.read()
+    except OSError:
+        return False
+
+
 def ram_by_user():
-    """{user: RAM%} as a share of total memory."""
+    """{user: RAM%} as a share of total memory.
+
+    Login sessions are read from their cgroup (page-accurate). Processes outside
+    one (system services, cron jobs) fall back to summed RSS, which counts memory
+    shared between forked processes once per process.
+    """
     total = psutil.virtual_memory().total or 1
+    by_uid = _cgroup_user_memory()
     sums = {}
+    for uid, used in by_uid.items():
+        try:
+            user = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            user = str(uid)
+        sums[user] = sums.get(user, 0) + used
+
     for p in psutil.process_iter(["username", "memory_info"]):
         try:
             info = p.info
-            rss = info["memory_info"].rss if info["memory_info"] else 0
+            if not info["memory_info"] or (by_uid and _in_user_slice(p.pid)):
+                continue
+            rss = info["memory_info"].rss
             user = info["username"] or "unknown"
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue

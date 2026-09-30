@@ -3,6 +3,7 @@
 import sys
 sys.path.append('..')  # add parent directory to path to import monitor_system
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 import users
 from monitor_bot import monitor_system
@@ -28,7 +29,7 @@ async def main():
         'delta_threshold': 0.1,
     }
     bot = MagicMock()
-    bot.send_message = AsyncMock(side_effect=lambda chat_id, text: print(f'[TG] {text}'))
+    bot.send_message = AsyncMock(side_effect=lambda chat_id, text, **kw: print(f'[TG] {text}'))
 
     # Deterministic metrics (no psutil / no /data dependency); temp included.
     metrics = {'cpu': 95, 'ram': 80, 'disk': 50, 'disk2': 90, 'temp': 88}
@@ -41,13 +42,13 @@ async def main():
     states = fresh_states()
     await monitor_system(config, bot, states, metrics={**metrics, 'temp': None})
 
-    # alice/bob/carol mapped (with and without '@'); dave unmapped; 50% cutoff.
-    # Expected: alice pinged on cpu+temp, bob on ram, carol on both disks;
+    # alice/bob/carol mapped to user IDs; dave unmapped;
+    # 50% cutoff. Expected: alice linked on cpu+temp, bob on ram, carol on both disks;
     # bob at 15.5% CPU and dave at 49.9% RAM (unmapped anyway) not pinged.
     print('\n--- pings: mapped users at >= 50% get @-mentioned ---')
     config_pings = {
         **config,
-        'user_pings': {'alice': '@alice_tg', 'bob': 'bob_tg', 'carol': '@carol_tg'},
+        'user_pings': {'alice': 111111111, 'bob': 222222222, 'carol': 333333333},
         'ping_min_share': 50,
     }
     states = fresh_states()
@@ -111,6 +112,54 @@ async def main():
     states['disk']['sent_at'] -= 6 * 3600  # pretend 6 h passed for /home only
     await disk_step('6 h after the /home alert', 95, 97, 1)
     print('  all disk cases OK')
+
+    # RAM and temperature: an alert on every check while over threshold.
+    print('\n--- ram/temp: one alert per interval while over threshold ---')
+    config_rep = {**config, 'thresholds': {**config['thresholds'], 'ram': 90, 'temp': 85}}
+    not_ram_temp = {'cpu', 'disk', 'disk2'}
+    states = fresh_states()
+
+    async def rep_step(desc, ram, temp, expect_sent):
+        before = bot.send_message.call_count
+        await monitor_system(config_rep, bot, states, muted_metrics=not_ram_temp,
+                             metrics={**metrics, 'ram': ram, 'temp': temp})
+        sent = bot.send_message.call_count - before
+        print(f'  {desc}: {sent} sent')
+        assert sent == expect_sent, f'{desc}: expected {expect_sent}, got {sent}'
+
+    await rep_step('RAM 91%, temp 88', 91, 88, 2)
+    await rep_step('same values, next interval', 91, 88, 2)
+    await rep_step('RAM 91%, temp back to 60', 91, 60, 1)
+    await rep_step('both below threshold', 80, 60, 0)
+    not_ram_temp.add('ram')  # as after /mute ram
+    await rep_step('RAM muted with /mute ram: only temp', 91, 88, 1)
+    print('  all ram/temp cases OK')
+
+    # A disk alert sent before the first du scan finished is edited once it's done.
+    print('\n--- disk: alert sent mid-scan gets the top users edited in ---')
+    edit_bot = MagicMock()
+    edit_bot.send_message = AsyncMock(
+        side_effect=lambda chat_id, text, **kw: SimpleNamespace(message_id=7, text_html=text))
+    edit_bot.edit_message_text = AsyncMock()
+    config_edit = {**config, 'user_pings': {'carol': 333333333}}
+    only_home = {'cpu', 'ram', 'disk2', 'temp'}
+    states = fresh_states()
+    users.disk_by_user = lambda paths: {}  # scan still running
+    await monitor_system(config_edit, edit_bot, states, muted_metrics=only_home, metrics=metrics)
+    sent = edit_bot.send_message.call_args.kwargs['text']
+    assert 'scan still running' in sent and 'tg://user?id=333333333' in sent
+    await monitor_system(config_edit, edit_bot, states, muted_metrics=only_home, metrics=metrics)
+    assert not edit_bot.edit_message_text.called, 'edited before the scan finished'
+    users.disk_by_user = lambda paths: {p: {'carol': 80.0} for p in paths}  # scan done
+    await monitor_system(config_edit, edit_bot, states, muted_metrics=only_home, metrics=metrics)
+    edited = edit_bot.edit_message_text.call_args.kwargs
+    print(f'[TG edit] {edited["text"]}')
+    assert edited['message_id'] == 7 and 'scan still running' not in edited['text']
+    assert 'carol</a>: 80.0%' in edited['text']
+    await monitor_system(config_edit, edit_bot, states, muted_metrics=only_home, metrics=metrics)
+    assert edit_bot.edit_message_text.call_count == 1, 'edited twice'
+    assert edit_bot.send_message.call_count == 1, 'disk alert re-sent'
+    print('  edit case OK')
 
 
 asyncio.run(main())

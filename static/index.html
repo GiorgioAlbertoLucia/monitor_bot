@@ -442,6 +442,7 @@
         const v = th[CFG_KEY[c.key]];
         if (typeof v === 'number') c.threshold = v;
       });
+      (cfg.default_users || []).forEach(u => pendingDefaults.add(u));
     } catch (e) { /* keep built-in defaults */ }
     CFG.forEach(applyThreshold);
   }
@@ -539,6 +540,7 @@
   }
 
   let knownUsers = [];        // names currently listed in the menu
+  const pendingDefaults = new Set();  // config default users not ticked yet
 
   function setSwatch(cb, color) {
     cb.nextElementSibling.style.background = cb.checked ? color : 'transparent';
@@ -590,6 +592,11 @@
     if (followAll) newcomers.forEach(u => selectedUsers.add(u));
     knownUsers = names;
 
+    // Default users are ticked the first time they show up; after that the
+    // viewer's own choice wins (unticking one doesn't bring it back).
+    const defaults = names.filter(u => pendingDefaults.has(u));
+    defaults.forEach(u => { selectedUsers.add(u); pendingDefaults.delete(u); });
+
     host.innerHTML = '<label class="all-users"><input type="checkbox" id="users-all-cb">'
       + '<span class="swatch"></span>All</label>'
       + names.map(u => {
@@ -601,7 +608,7 @@
     host.querySelectorAll('.user-cb').forEach(cb => cb.addEventListener('change', onUserToggle));
     document.getElementById('users-all-cb').addEventListener('change', onAllToggle);
     syncAllBox();
-    if (followAll) { updateCount(); refreshOverlays(); }
+    if (followAll || defaults.length) { updateCount(); refreshOverlays(); }
   }
 
   document.getElementById('users-filter-btn').addEventListener('click', e => {

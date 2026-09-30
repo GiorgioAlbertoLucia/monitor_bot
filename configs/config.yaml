@@ -5,7 +5,7 @@ telegram:
 
 thresholds:
   cpu: 90  # Soglia percentuale di CPU
-  ram: 90  # Soglia percentuale di RAM
+  ram: 80  # Soglia percentuale di RAM
   disk: 90  # Soglia percentuale di /home
   disk_2: 90  # Soglia percentuale di /data
   temp: 85  # Soglia temperatura CPU in °C
@@ -13,7 +13,9 @@ thresholds:
 repeat_threshold: 5  # Soglia di messaggi consecutivi
 interval: 15  # Intervallo di monitoraggio in secondi
 alert_reset_hours: 3  # Numero di ore dopo le quali resettare lo stato di allerta
+repeat_every_interval: [ram, temp]  # Metriche che mandano un allarme a ogni intervallo finché restano sopra soglia
 disk_alert_interval_hours: 6  # Dischi: al massimo un allarme ogni N ore per ciascun disco (/home e /data separati)
+ping_everyone: [disk, disk2]  # Metriche i cui allarmi menzionano tutti gli utenti in user_pings, non solo i responsabili
 cpu_same_user_cooldown_minutes: 60  # CPU: chi supera ping_min_share fa scattare al massimo un allarme ogni N minuti (anche se la CPU scende e risale)
 
 dashboard_port: 8080
@@ -28,10 +30,13 @@ database:
 # Autenticazione opzionale della dashboard: "utente:password" per attivarla, vuoto = aperta
 dashboard_auth: ""
 
-# Menzioni Telegram negli allarmi: utente Unix -> @username Telegram.
+# Utenti mostrati di default sui grafici della dashboard (spuntati all'apertura della pagina)
+dashboard_default_users: [] #  alice, bob
+
+# Menzioni Telegram negli allarmi: utente Unix -> user ID Telegram (numerico).
 # Funziona solo se chat_id è un gruppo di cui la persona fa parte.
 user_pings: {
 }
-#  alice: "@alice_tg"
-#  bob: "@bob_tg"
-ping_min_share: 40  # menziona solo chi usa almeno questa % della macchina (per la temperatura: % di CPU); per la CPU è anche la soglia del "responsabile"
+#  alice: 111111111
+#  bob: 222222222
+ping_min_share: 30  # menziona solo chi usa almeno questa % della macchina (per la temperatura: % di CPU); per la CPU è anche la soglia del "responsabile"

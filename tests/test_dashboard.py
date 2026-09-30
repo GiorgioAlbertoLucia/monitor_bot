@@ -77,7 +77,7 @@ def users_history():
 
 @app.route('/config')
 def config():
-    return jsonify({'thresholds': THRESHOLDS})
+    return jsonify({'thresholds': THRESHOLDS, 'default_users': ['alice', 'carol']})
 
 
 @app.route('/')

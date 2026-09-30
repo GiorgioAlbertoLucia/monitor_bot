@@ -13,6 +13,7 @@ app = Flask(__name__, static_folder="static")
 app.config.setdefault("DB_PATH", os.environ.get("MONITOR_DB", "data/metrics.db"))
 app.config.setdefault("THRESHOLDS", {})
 app.config.setdefault("AUTH", None)  # "user:password" enables HTTP Basic Auth.
+app.config.setdefault("DEFAULT_USERS", [])  # users overlaid on the charts when the page loads
 app.config.setdefault("DISK_PATHS", None)  # None -> users.MONITORED_DISK_PATHS
 
 MAX_WINDOW = 7 * 24 * 3600  # cap /history at one week
@@ -72,7 +73,10 @@ def users_history():
 
 @app.route("/config")
 def config():
-    return jsonify({"thresholds": app.config.get("THRESHOLDS", {})})
+    return jsonify({
+        "thresholds": app.config.get("THRESHOLDS", {}),
+        "default_users": app.config.get("DEFAULT_USERS", []),
+    })
 
 
 @app.route("/")
