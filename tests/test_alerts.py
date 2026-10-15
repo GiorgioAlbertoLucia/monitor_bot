@@ -54,92 +54,51 @@ async def main():
     states = fresh_states()
     await monitor_system(config_pings, bot, states, metrics=metrics)
 
-    # CPU: users at >= 50% that triggered an alert don't trigger another for an hour,
-    # whatever happens in between (dips, temperature). The CPU threshold here is 1%,
-    # so a "dip" is 0.5%.
-    print('\n--- cpu: each user over 50% triggers at most one alert per hour ---')
-    config_cpu = {**config, 'thresholds': {**config['thresholds'], 'temp': 85},
-                  'cpu_same_user_cooldown_minutes': 60, 'ping_min_share': 50}
-    only_cpu = {'ram', 'disk', 'disk2', 'temp'}
+    # Every metric follows the same rules: alert when the threshold is crossed, then
+    # only if the value rises by delta_threshold over the last alert; the state resets
+    # once the value has stayed below threshold for alert_rearm_seconds, or after
+    # alert_reset_hours.
+    print('\n--- alerts: threshold crossing, delta re-alert, slow reset ---')
+    config_rules = {**config, 'thresholds': {**config['thresholds'], 'ram': 90},
+                    'delta_threshold': 5, 'alert_reset_hours': 3, 'alert_rearm_seconds': 60}
+    only_ram = {'cpu', 'disk', 'disk2', 'temp'}
     states = fresh_states()
 
-    async def step(desc, cpu, temp, expect_sent):
+    async def rule_step(desc, ram, expect_sent):
         before = bot.send_message.call_count
-        await monitor_system(config_cpu, bot, states, muted_metrics=only_cpu,
-                             metrics={**metrics, 'cpu': cpu, 'temp': temp})
-        sent = bot.send_message.call_count - before
-        print(f'  {desc}: {"sent" if sent else "silent"}')
-        assert sent == expect_sent, f'{desc}: expected {expect_sent}, got {sent}'
-
-    await step('alice at 72%, first alert', 95, 60, 1)
-    await step('alice, CPU up 4 points', 99, 60, 0)
-    # The stress-test pattern: full load heats the CPU, dips, comes back hot.
-    await step('alice, CPU dips below threshold', 0.5, 84, 0)
-    await step('alice, back over threshold with temp over threshold', 99.5, 93, 0)
-    users.cpu_by_user = lambda: {'bob': 80.0, 'alice': 10.0}
-    await step('bob at 80%, new user', 97, 60, 1)
-    await step('bob again', 99, 95, 0)
-    users.cpu_by_user = lambda: {'alice': 72.0, 'bob': 15.5}
-    await step('alice back on top within her hour', 99, 60, 0)
-    users.cpu_by_user = lambda: {'bob': 30.0, 'carol': 30.0, 'dave': 30.0}
-    await step('nobody over 50%, CPU rose since last alert (usual rules)', 99.5, 60, 1)
-    await step('nobody over 50%, no change', 99.5, 60, 0)
-    users.cpu_by_user = lambda: {'alice': 72.0, 'bob': 15.5}
-    states['cpu']['culprits']['alice'] -= 3601  # pretend alice's hour is up
-    await step('alice, one hour after her alert', 99.5, 60, 1)
-    print('  all cpu cases OK')
-
-    # Disks: each disk alerts at most once per 6 h, ignoring rises and dips.
-    print('\n--- disks: at most one alert per disk every 6 hours ---')
-    config_disk = {**config, 'disk_alert_interval_hours': 6}
-    not_disks = {'cpu', 'ram', 'temp'}
-    states = fresh_states()
-
-    async def disk_step(desc, disk, disk2, expect_sent):
-        before = bot.send_message.call_count
-        await monitor_system(config_disk, bot, states, muted_metrics=not_disks,
-                             metrics={**metrics, 'disk': disk, 'disk2': disk2})
+        await monitor_system(config_rules, bot, states, muted_metrics=only_ram,
+                             metrics={**metrics, 'ram': ram})
         sent = bot.send_message.call_count - before
         print(f'  {desc}: {sent} sent')
         assert sent == expect_sent, f'{desc}: expected {expect_sent}, got {sent}'
 
-    await disk_step('/home over threshold, /data below', 91, 0.5, 1)
-    await disk_step('/home up 8 points', 99, 0.5, 0)
-    await disk_step('/home dips below and back up', 0.5, 0.5, 0)
-    await disk_step('/home back over threshold', 95, 0.5, 0)
-    await disk_step('/data over threshold (independent of /home)', 95, 92, 1)
-    await disk_step('both still over threshold', 95, 97, 0)
-    states['disk']['sent_at'] -= 6 * 3600  # pretend 6 h passed for /home only
-    await disk_step('6 h after the /home alert', 95, 97, 1)
-    print('  all disk cases OK')
-
-    # RAM and temperature: an alert on every check while over threshold.
-    print('\n--- ram/temp: one alert per interval while over threshold ---')
-    config_rep = {**config, 'thresholds': {**config['thresholds'], 'ram': 90, 'temp': 85}}
-    not_ram_temp = {'cpu', 'disk', 'disk2'}
+    await rule_step('RAM crosses threshold (91%)', 91, 1)
+    await rule_step('same value, next interval', 91, 0)
+    await rule_step('up 4 points (below delta)', 95, 0)
+    await rule_step('up 5 points over last alert', 96, 1)
+    await rule_step('still high, no further rise', 97, 0)
+    await rule_step('dips below threshold', 80, 0)
+    await rule_step('back over within the re-arm time (no alert)', 91, 0)
+    await rule_step('below threshold again', 80, 0)
+    states['ram']['below_since'] -= 60  # pretend it stayed below for 60 s
+    await rule_step('still below after 60 s (re-armed)', 80, 0)
+    await rule_step('crosses threshold again', 91, 1)
+    await rule_step('stays over threshold', 91, 0)
+    states['ram']['last_notified_time'] -= 3 * 3600  # pretend 3 h passed
+    await rule_step('3 h after the last alert (reset)', 91, 1)
+    not_ram = only_ram | {'ram'}  # as after /mute ram
     states = fresh_states()
-
-    async def rep_step(desc, ram, temp, expect_sent):
-        before = bot.send_message.call_count
-        await monitor_system(config_rep, bot, states, muted_metrics=not_ram_temp,
-                             metrics={**metrics, 'ram': ram, 'temp': temp})
-        sent = bot.send_message.call_count - before
-        print(f'  {desc}: {sent} sent')
-        assert sent == expect_sent, f'{desc}: expected {expect_sent}, got {sent}'
-
-    await rep_step('RAM 91%, temp 88', 91, 88, 2)
-    await rep_step('same values, next interval', 91, 88, 2)
-    await rep_step('RAM 91%, temp back to 60', 91, 60, 1)
-    await rep_step('both below threshold', 80, 60, 0)
-    not_ram_temp.add('ram')  # as after /mute ram
-    await rep_step('RAM muted with /mute ram: only temp', 91, 88, 1)
-    print('  all ram/temp cases OK')
+    await monitor_system(config_rules, bot, states, muted_metrics=not_ram,
+                         metrics={**metrics, 'ram': 99})
+    assert states['ram']['last_notified_value'] is None, 'muted metric alerted'
+    print('  all alert-rule cases OK')
 
     # A disk alert sent before the first du scan finished is edited once it's done.
     print('\n--- disk: alert sent mid-scan gets the top users edited in ---')
     edit_bot = MagicMock()
     edit_bot.send_message = AsyncMock(
-        side_effect=lambda chat_id, text, **kw: SimpleNamespace(message_id=7, text_html=text))
+        side_effect=lambda chat_id, text, **kw: SimpleNamespace(message_id=7, text_html=text,
+                                                                reply_markup=kw.get('reply_markup')))
     edit_bot.edit_message_text = AsyncMock()
     config_edit = {**config, 'user_pings': {'carol': 333333333}}
     only_home = {'cpu', 'ram', 'disk2', 'temp'}
@@ -156,6 +115,8 @@ async def main():
     print(f'[TG edit] {edited["text"]}')
     assert edited['message_id'] == 7 and 'scan still running' not in edited['text']
     assert 'carol</a>: 80.0%' in edited['text']
+    buttons = [b.callback_data for row in edited['reply_markup'].inline_keyboard for b in row]
+    assert buttons == ['procs', 'mute:disk:3600'], f'alert buttons lost in the edit: {buttons}'
     await monitor_system(config_edit, edit_bot, states, muted_metrics=only_home, metrics=metrics)
     assert edit_bot.edit_message_text.call_count == 1, 'edited twice'
     assert edit_bot.send_message.call_count == 1, 'disk alert re-sent'

@@ -57,14 +57,18 @@ def insert(path, metrics, ts=None):
         )
 
 
-def fetch_since(path, seconds):
-    """Return rows recorded in the last ``seconds``, oldest first, as dicts."""
+def fetch_since(path, seconds, bucket=1):
+    """Return rows recorded in the last ``seconds``, oldest first, as dicts.
+
+    Samples are grouped into ``bucket``-second slots keeping each slot's peak, so
+    long windows stay light without hiding the spikes that trigger alerts.
+    """
     cutoff = int(time.time()) - seconds
     with _connect(path) as conn:
         rows = conn.execute(
-            "SELECT ts, cpu, ram, disk, disk2, temp FROM metrics "
-            "WHERE ts >= ? ORDER BY ts ASC",
-            (cutoff,),
+            "SELECT (ts / ?) * ? AS b, MAX(cpu), MAX(ram), MAX(disk), MAX(disk2), MAX(temp) "
+            "FROM metrics WHERE ts >= ? GROUP BY b ORDER BY b ASC",
+            (bucket, bucket, cutoff),
         ).fetchall()
     return [dict(zip(COLUMNS, row)) for row in rows]
 
@@ -97,17 +101,19 @@ def list_users(path, seconds):
     return [r[0] for r in rows]
 
 
-def fetch_user_history(path, seconds, usernames):
-    """Per-user rows in the last ``seconds`` for the given users, oldest first."""
+def fetch_user_history(path, seconds, usernames, bucket=1):
+    """Per-user rows in the last ``seconds`` for the given users, oldest first,
+    grouped into ``bucket``-second slots like ``fetch_since``."""
     if not usernames:
         return []
     cutoff = int(time.time()) - seconds
     placeholders = ",".join("?" * len(usernames))
     with _connect(path) as conn:
         rows = conn.execute(
-            "SELECT ts, user, cpu, ram, disk, disk2 FROM user_metrics "
-            f"WHERE ts >= ? AND user IN ({placeholders}) ORDER BY ts ASC",
-            (cutoff, *usernames),
+            "SELECT (ts / ?) * ? AS b, user, MAX(cpu), MAX(ram), MAX(disk), MAX(disk2) "
+            f"FROM user_metrics WHERE ts >= ? AND user IN ({placeholders}) "
+            "GROUP BY b, user ORDER BY b ASC",
+            (bucket, bucket, cutoff, *usernames),
         ).fetchall()
     return [dict(zip(USER_COLUMNS, row)) for row in rows]
 

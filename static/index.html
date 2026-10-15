@@ -60,7 +60,12 @@
 
   .header-title span { color: var(--muted); font-weight: 400; margin-left: 10px; }
 
-  .header-right { display: flex; align-items: center; gap: 18px; }
+  .header-right { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+
+  /* history window selector */
+  .range-btns { display: flex; gap: 4px; }
+  .range-btns .filter-btn { padding: 6px 9px; color: var(--muted); }
+  .range-btns .filter-btn.active { color: var(--text); border-color: var(--text); background: var(--surface); }
 
   #ts { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
 
@@ -242,8 +247,15 @@
 <body>
 
 <header>
-  <div class="header-title">ALI50XL Monitor <span>/ live metrics</span></div>
+  <div class="header-title">ALI21XL Monitor <span>/ live metrics</span></div>
   <div class="header-right">
+    <div class="range-btns" id="range-btns">
+      <button class="filter-btn" data-seconds="3600">1h</button>
+      <button class="filter-btn" data-seconds="21600">6h</button>
+      <button class="filter-btn" data-seconds="86400">24h</button>
+      <button class="filter-btn" data-seconds="604800">7d</button>
+      <button class="filter-btn" data-seconds="1209600">14d</button>
+    </div>
     <div class="users-toolbar">
       <button class="filter-btn" id="users-filter-btn">Overlay users <span class="count" id="users-count"></span> ▾</button>
       <div class="filter-menu hidden" id="users-menu">
@@ -356,7 +368,13 @@
     return userColors[user];
   }
 
-  const WINDOW = 3600;          // seconds of history to show
+  // Seconds of history to show; two weeks by default, the viewer's last pick if any.
+  let WINDOW = 14 * 24 * 3600;
+  try {
+    const saved = parseInt(localStorage.getItem('monitor-window'), 10);
+    if (saved > 0) WINDOW = saved;
+  } catch (e) { /* storage unavailable: keep the default */ }
+  let historySeq = 0;           // drops responses for a window the viewer already left
   const labels = [];
   let historyTs = [];           // parallel to labels: the raw ts of each point
   let userSeries = {};          // user -> { ts -> {cpu,ram,disk,disk2} }
@@ -430,6 +448,12 @@
     return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
+  // Chart labels: multi-day windows need the date too.
+  function fmtLabel(ts) {
+    if (WINDOW <= 86400) return fmtTime(ts);
+    return new Date(ts * 1000).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
   function applyThreshold(cfg) {
     document.getElementById(cfg.noteId).textContent = 'threshold ' + cfg.threshold + cfg.unit;
   }
@@ -474,9 +498,11 @@
 
   async function refreshOverlays() {
     if (selectedUsers.size === 0) { userSeries = {}; redrawOverlays(); return; }
+    const seq = historySeq;
     try {
       const q = encodeURIComponent([...selectedUsers].join(','));
       const rows = await (await fetch('/users/history?seconds=' + WINDOW + '&users=' + q)).json();
+      if (seq !== historySeq) return;
       const map = {};
       rows.forEach(r => { (map[r.user] ||= {})[r.ts] = r; });
       userSeries = map;
@@ -488,11 +514,13 @@
 
   // Persistent charts: rebuild the aggregate straight from the database.
   async function refreshHistory() {
+    const seq = ++historySeq;
     try {
       const rows = await (await fetch('/history?seconds=' + WINDOW)).json();
+      if (seq !== historySeq) return;
       labels.length = 0;
       historyTs = rows.map(r => r.ts);
-      rows.forEach(r => labels.push(fmtTime(r.ts)));
+      rows.forEach(r => labels.push(fmtLabel(r.ts)));
       CFG.forEach(c => {
         charts[c.key].data.datasets[0].data = rows.map(r => r[c.key]);
         charts[c.key].data.datasets[1].data = new Array(labels.length).fill(c.threshold);
@@ -610,6 +638,21 @@
     syncAllBox();
     if (followAll || defaults.length) { updateCount(); refreshOverlays(); }
   }
+
+  // ---- history window selector ----
+  function markRange() {
+    document.querySelectorAll('#range-btns .filter-btn').forEach(b =>
+      b.classList.toggle('active', Number(b.dataset.seconds) === WINDOW));
+  }
+  document.querySelectorAll('#range-btns .filter-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      WINDOW = Number(b.dataset.seconds);
+      try { localStorage.setItem('monitor-window', String(WINDOW)); } catch (e) { /* not remembered */ }
+      markRange();
+      refreshHistory();
+    });
+  });
+  markRange();
 
   document.getElementById('users-filter-btn').addEventListener('click', e => {
     e.stopPropagation();

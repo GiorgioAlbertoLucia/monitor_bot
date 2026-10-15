@@ -16,7 +16,13 @@ app.config.setdefault("AUTH", None)  # "user:password" enables HTTP Basic Auth.
 app.config.setdefault("DEFAULT_USERS", [])  # users overlaid on the charts when the page loads
 app.config.setdefault("DISK_PATHS", None)  # None -> users.MONITORED_DISK_PATHS
 
-MAX_WINDOW = 7 * 24 * 3600  # cap /history at one week
+MAX_WINDOW = 14 * 24 * 3600  # cap /history at two weeks
+MAX_POINTS = 1000  # longer windows are grouped into buckets to stay under this
+
+
+def bucket_for(seconds):
+    """Bucket size (s) so a window of ``seconds`` returns at most MAX_POINTS points."""
+    return max(1, -(-seconds // MAX_POINTS))
 
 
 @app.before_request
@@ -42,7 +48,7 @@ def metrics():
 def history():
     seconds = request.args.get("seconds", default=3600, type=int)
     seconds = max(60, min(seconds, MAX_WINDOW))
-    return jsonify(database.fetch_since(app.config["DB_PATH"], seconds))
+    return jsonify(database.fetch_since(app.config["DB_PATH"], seconds, bucket_for(seconds)))
 
 
 @app.route("/users")
@@ -68,7 +74,8 @@ def users_history():
     seconds = request.args.get("seconds", default=3600, type=int)
     seconds = max(60, min(seconds, MAX_WINDOW))
     names = [n for n in request.args.get("users", "").split(",") if n]
-    return jsonify(database.fetch_user_history(app.config["DB_PATH"], seconds, names))
+    return jsonify(database.fetch_user_history(
+        app.config["DB_PATH"], seconds, names, bucket_for(seconds)))
 
 
 @app.route("/config")

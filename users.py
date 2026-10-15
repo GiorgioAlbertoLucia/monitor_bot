@@ -49,6 +49,64 @@ def cpu_by_user():
     return {u: v / ncpu for u, v in totals.items() if v > 0}
 
 
+# Interpreters whose script, not the binary, says what a process is.
+INTERPRETERS = {"python", "python3", "node", "bash", "sh", "perl", "Rscript", "root", "root.exe", "java"}
+
+
+def process_label(name, cmdline):
+    """Short readable name: the program from the command line (thread names such as
+    "MainThread" hide it), plus the script for interpreters like python."""
+    if not cmdline:
+        return name
+    # Programs that rewrite their title ("avahi-daemon: running") put it all in argv[0].
+    words = cmdline[0].split()
+    prog = os.path.basename(words[0]).rstrip(":") if words else name
+    if re.sub(r"[\d.]+$", "", prog) in INTERPRETERS or prog in INTERPRETERS:
+        args = cmdline[1:]
+        script = None
+        for i, a in enumerate(args):
+            if a == "-c":
+                script = "-c"  # inline code: the code itself is no name
+                break
+            if a == "-m" and i + 1 < len(args):
+                script = "-m " + args[i + 1]
+                break
+            if a and not a.startswith("-"):
+                script = os.path.basename(a.split()[0])
+                break
+        if script:
+            prog += " " + script
+    return prog[:40]
+
+
+def top_processes(n=5):
+    """The ``n`` heaviest processes by CPU and by RAM, as lists of dicts with
+    pid, user, name, cpu (share of total capacity, 0-100) and ram (bytes)."""
+    for p in psutil.process_iter():
+        try:
+            p.cpu_percent()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    time.sleep(0.5)
+
+    ncpu = psutil.cpu_count() or 1
+    procs = []
+    for p in psutil.process_iter(["username", "name", "cmdline", "memory_info"]):
+        try:
+            procs.append({
+                "pid":  p.pid,
+                "user": p.info["username"] or "unknown",
+                "name": process_label(p.info["name"] or "?", p.info["cmdline"]),
+                "cpu":  p.cpu_percent() / ncpu,
+                "ram":  p.info["memory_info"].rss if p.info["memory_info"] else 0,
+            })
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    by_cpu = sorted(procs, key=lambda x: x["cpu"], reverse=True)[:n]
+    by_ram = sorted(procs, key=lambda x: x["ram"], reverse=True)[:n]
+    return by_cpu, by_ram
+
+
 def _cgroup_user_memory():
     """{uid: bytes} of program memory (anon + shmem, no page cache) charged to each
     user's login slice. Empty if cgroup v2 user slices aren't available.

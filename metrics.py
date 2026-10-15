@@ -32,6 +32,31 @@ def cpu_temperature():
     return round(max(vals), 1) if vals else None
 
 
+def _busy_total(t):
+    """(busy, total) CPU seconds from a psutil.cpu_times() reading, as psutil counts them."""
+    # guest time is already included in user time on Linux; iowait counts as idle.
+    total = sum(t) - getattr(t, "guest", 0) - getattr(t, "guest_nice", 0)
+    idle = t.idle + getattr(t, "iowait", 0)
+    return total - idle, total
+
+
+class CpuMeter:
+    """Whole-machine CPU % averaged since the previous read(): checks a few seconds apart
+    leave no gaps for a load spike to hide in. Each read is one /proc/stat parse (~0.3 ms)."""
+
+    def __init__(self):
+        self._last = psutil.cpu_times()
+
+    def read(self):
+        now = psutil.cpu_times()
+        busy0, total0 = _busy_total(self._last)
+        busy1, total1 = _busy_total(now)
+        self._last = now
+        if total1 <= total0:
+            return 0.0
+        return round(min(100.0, max(0.0, (busy1 - busy0) / (total1 - total0) * 100)), 1)
+
+
 def collect_metrics():
     """Sample all monitored metrics once. ``temp`` is None on machines without sensors."""
     return {
